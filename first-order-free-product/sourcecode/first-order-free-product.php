@@ -4,7 +4,7 @@
  * Author: MetWrk SafeHouse
  * Author URI: https://metwrk.com
  * Version: 1.1
- * Description: "Off your customers a free gift with their first purchase. You can use a live product, or create a product that is Catalog visibility: Hidden to use an unpublished product
+ * Description: "Offer your customers a free gift with their first purchase. You can use a live product, or create a product that is Catalog visibility: Hidden to use an unpublished product
 */
 if ( ! defined( 'ABSPATH' ) ) { 
     exit; // Exit if accessed directly
