@@ -67,10 +67,9 @@ function pbv_woocommerce_product_custom_fields_save($post_id)
 
 }
 
+add_filter('woocommerce_product_get_price', 'pbv_return_offer_price', 10, 2);
 
-add_filter('woocommerce_product_get_price', 'pbv_return_custom_price', 10, 2);
-
-function pbv_return_custom_price($price, $product) {
+function pbv_return_offer_price($price, $product) {
     if(is_product()){
         $load_count = get_post_meta( $product->get_id(), '_visit_price_count', true );
         $load_price = get_post_meta( $product->get_id(), '_visit_price', true );
