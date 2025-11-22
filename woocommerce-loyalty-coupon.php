@@ -257,33 +257,44 @@ function wc_loyalty_save_meta_from_thankyou( $order_id ) {
 function wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order_id ) {
 	error_log( "WC Loyalty Coupon: Building email for $recipient - Code: $code" );
 
-	// Email subject with store name
-	$blogname = get_option( 'blogname' );
-	$subject = 'You just got $' . number_format( $amount, 2 ) . ' off from ' . $blogname;
+	// Get order and customer name
+	$order = wc_get_order( $order_id );
+	$customer_first_name = $order ? $order->get_billing_first_name() : 'Valued Customer';
 
-	// Build HTML message with centered coupon code
-	$message = '<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">';
-	$message .= '<div style="max-width: 600px; margin: 0 auto;">';
-	$message .= '<h2 style="text-align: center; color: #0073aa; margin-bottom: 10px;">You\'ve Received a Coupon!</h2>';
-	$message .= '<p style="text-align: center; font-size: 14px; color: #666;">Thanks for being a valued customer!</p>';
+	// Email subject with customer name
+	$blogname = get_option( 'blogname' );
+	$subject = 'You just got $' . number_format( $amount, 2 ) . ' off from ' . esc_html( $customer_first_name );
+
+	// Build HTML message - left-aligned with new brand color
+	$message = '<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; text-align: left;">';
+	$message .= '<div style="max-width: 600px; margin: 0 auto; padding-top: 35px;">';
+
+	// Logo placeholder (customizable via filter)
+	$logo_url = apply_filters( 'wc_loyalty_email_logo_url', '' );
+	if ( $logo_url ) {
+		$message .= '<div style="margin-bottom: 20px;">';
+		$message .= '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( $blogname ) . '" style="max-width: 200px; height: auto;">';
+		$message .= '</div>';
+	}
+
+	$message .= '<h2 style="color: #153ca3; margin-bottom: 10px;">You\'ve Received a Coupon!</h2>';
+	$message .= '<p>Thanks for being a valued customer!</p>';
 
 	$message .= '<p>Hi,</p>';
-	$message .= '<p>You\'ve been given a <strong>$' . number_format( $amount, 2 ) . ' discount coupon</strong> from ' . esc_html( $blogname ) . '!</p>';
+	$message .= '<p>You\'ve been given a <strong>$' . number_format( $amount, 2 ) . ' discount coupon</strong> from ' . esc_html( $customer_first_name ) . ' and ' . esc_html( $blogname ) . '!</p>';
 
-	$message .= '<h3 style="color: #0073aa; text-align: center;">Your Coupon Code</h3>';
-	$message .= '<div style="background: #f5f5f5; padding: 20px; border-left: 4px solid #0073aa; border-radius: 4px; text-align: center;">';
-	$message .= '<p style="font-size: 24px; font-weight: bold; color: #0073aa; letter-spacing: 3px; margin: 0;">' . esc_html( $code ) . '</p>';
-	$message .= '</div>';
+	$message .= '<h3 style="color: #153ca3;">Your Coupon Code</h3>';
+	$message .= '<p style="font-size: 18px; font-weight: bold; color: #153ca3; letter-spacing: 2px;">' . esc_html( $code ) . '</p>';
 
-	$message .= '<h3 style="color: #333; margin-top: 20px;">Coupon Details</h3>';
+	$message .= '<h3 style="color: #333;">Coupon Details</h3>';
 	$message .= '<ul style="padding-left: 20px;">';
 	$message .= '<li><strong>Discount:</strong> $' . number_format( $amount, 2 ) . '</li>';
 	$message .= '<li><strong>Valid Until:</strong> ' . date( 'Y-m-d', strtotime( "+$days days" ) ) . '</li>';
 	$message .= '<li><strong>Usage:</strong> Once per customer</li>';
 	$message .= '</ul>';
 
-	$message .= '<p style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">Use this coupon code at checkout on your next purchase!</p>';
-	$message .= '<p style="text-align: center; color: #666; font-size: 12px;">Best regards,<br><strong>' . esc_html( $blogname ) . '</strong></p>';
+	$message .= '<p>Use this coupon code at checkout on your next purchase!</p>';
+	$message .= '<p>Best regards,<br><strong>' . esc_html( $blogname ) . '</strong></p>';
 	$message .= '</div>';
 	$message .= '</body></html>';
 
