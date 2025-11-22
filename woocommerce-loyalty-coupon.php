@@ -52,7 +52,7 @@ function wc_loyalty_init() {
 	error_log( 'WC Loyalty Coupon: Registering frontend hooks' );
 	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form' );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
-	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_save_meta' );
+	add_action( 'woocommerce_checkout_create_order', 'wc_loyalty_save_meta_from_checkout', 10, 2 );
 	add_action( 'woocommerce_before_cart', 'wc_loyalty_cart_banner' );
 
 	error_log( 'WC Loyalty Coupon: Plugin initialized successfully' );
@@ -214,31 +214,42 @@ function wc_loyalty_validate_checkout() {
 }
 
 /**
- * Save order meta
+ * Save order meta from checkout (woocommerce_checkout_create_order hook)
  */
-function wc_loyalty_save_meta( $order_id ) {
-	error_log( "WC Loyalty Coupon: *** SAVE_META called for order $order_id ***" );
+function wc_loyalty_save_meta_from_checkout( $order, $data ) {
+	$order_id = $order->get_id();
+	error_log( "WC Loyalty Coupon: *** CHECKOUT_CREATE_ORDER HOOK fired for order $order_id ***" );
 
-	if ( ! wc_loyalty_qualifies() ) {
-		error_log( "WC Loyalty Coupon: Order $order_id doesn't qualify (cart check)" );
-		return;
-	}
-
+	// Get choice from POST
 	$choice = isset( $_POST['wc_loyalty_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_choice'] ) : 'keep';
-	error_log( "WC Loyalty Coupon: POST data - choice: " . print_r( $_POST['wc_loyalty_choice'] ?? 'NOT SET', true ) . ", email: " . print_r( $_POST['wc_loyalty_email'] ?? 'NOT SET', true ) );
+	error_log( "WC Loyalty Coupon: Retrieved choice from POST: '" . ( $choice ? $choice : 'EMPTY' ) . "'" );
 
-	update_post_meta( $order_id, '_wc_loyalty_choice', $choice );
-	error_log( "WC Loyalty Coupon: Saved choice for order $order_id: $choice" );
+	if ( ! empty( $choice ) ) {
+		update_post_meta( $order_id, '_wc_loyalty_choice', $choice );
+		error_log( "WC Loyalty Coupon: ✓ Saved choice to order meta: $choice" );
+	} else {
+		error_log( "WC Loyalty Coupon: ✗ No choice in POST data for order $order_id" );
+	}
 
 	if ( 'gift' === $choice ) {
 		$email = isset( $_POST['wc_loyalty_email'] ) ? sanitize_email( $_POST['wc_loyalty_email'] ) : '';
+		error_log( "WC Loyalty Coupon: Gift mode - Retrieved email from POST: '" . ( $email ? $email : 'EMPTY' ) . "'" );
+
 		if ( $email ) {
 			update_post_meta( $order_id, '_wc_loyalty_friend_email', $email );
-			error_log( "WC Loyalty Coupon: Saved friend email for order $order_id: $email" );
+			error_log( "WC Loyalty Coupon: ✓ Saved friend email to order meta: $email" );
 		} else {
-			error_log( "WC Loyalty Coupon: Gift choice but no email provided for order $order_id" );
+			error_log( "WC Loyalty Coupon: ✗ Gift choice but no email provided for order $order_id" );
 		}
 	}
+}
+
+/**
+ * Legacy save_meta function (deprecated but kept for backwards compatibility)
+ */
+function wc_loyalty_save_meta( $order_id ) {
+	error_log( "WC Loyalty Coupon: *** LEGACY SAVE_META called for order $order_id (deprecated) ***" );
+	// This function is no longer used, but kept in case it's called elsewhere
 }
 
 /**
