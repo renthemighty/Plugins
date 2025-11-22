@@ -52,7 +52,7 @@ function wc_loyalty_init() {
 	error_log( 'WC Loyalty Coupon: Registering frontend hooks' );
 	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form' );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
-	add_action( 'woocommerce_checkout_create_order', 'wc_loyalty_save_meta_from_checkout', 10, 2 );
+	add_action( 'woocommerce_thankyou', 'wc_loyalty_save_meta_from_thankyou', 10, 1 );
 	add_action( 'woocommerce_before_cart', 'wc_loyalty_cart_banner' );
 
 	error_log( 'WC Loyalty Coupon: Plugin initialized successfully' );
@@ -214,21 +214,23 @@ function wc_loyalty_validate_checkout() {
 }
 
 /**
- * Save order meta from checkout (woocommerce_checkout_create_order hook)
+ * Save order meta from thank you page (woocommerce_thankyou hook)
+ * This fires after the order is fully created and processed
  */
-function wc_loyalty_save_meta_from_checkout( $order, $data ) {
-	$order_id = $order->get_id();
-	error_log( "WC Loyalty Coupon: *** CHECKOUT_CREATE_ORDER HOOK fired for order $order_id ***" );
+function wc_loyalty_save_meta_from_thankyou( $order_id ) {
+	error_log( "WC Loyalty Coupon: *** THANKYOU HOOK fired for order $order_id ***" );
 
 	// Get choice from POST
 	$choice = isset( $_POST['wc_loyalty_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_choice'] ) : 'keep';
 	error_log( "WC Loyalty Coupon: Retrieved choice from POST: '" . ( $choice ? $choice : 'EMPTY' ) . "'" );
+	error_log( "WC Loyalty Coupon: All POST keys: " . implode( ', ', array_keys( $_POST ) ) );
 
 	if ( ! empty( $choice ) ) {
 		update_post_meta( $order_id, '_wc_loyalty_choice', $choice );
 		error_log( "WC Loyalty Coupon: ✓ Saved choice to order meta: $choice" );
 	} else {
 		error_log( "WC Loyalty Coupon: ✗ No choice in POST data for order $order_id" );
+		return;
 	}
 
 	if ( 'gift' === $choice ) {
@@ -242,14 +244,10 @@ function wc_loyalty_save_meta_from_checkout( $order, $data ) {
 			error_log( "WC Loyalty Coupon: ✗ Gift choice but no email provided for order $order_id" );
 		}
 	}
-}
 
-/**
- * Legacy save_meta function (deprecated but kept for backwards compatibility)
- */
-function wc_loyalty_save_meta( $order_id ) {
-	error_log( "WC Loyalty Coupon: *** LEGACY SAVE_META called for order $order_id (deprecated) ***" );
-	// This function is no longer used, but kept in case it's called elsewhere
+	// Now that meta is saved, trigger coupon creation
+	error_log( "WC Loyalty Coupon: Manually triggering coupon creation from thank you page" );
+	wc_loyalty_create_coupon( $order_id );
 }
 
 /**
