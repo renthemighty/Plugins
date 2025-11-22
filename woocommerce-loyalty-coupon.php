@@ -50,7 +50,7 @@ function wc_loyalty_init() {
 
 	// Frontend only hooks
 	error_log( 'WC Loyalty Coupon: Registering frontend hooks' );
-	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form' );
+	add_action( 'woocommerce_checkout_before_order_review', 'wc_loyalty_checkout_form', 5 );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
 	add_action( 'woocommerce_thankyou', 'wc_loyalty_save_meta_from_thankyou', 10, 1 );
 	add_action( 'woocommerce_before_cart', 'wc_loyalty_cart_banner' );
