@@ -36,7 +36,7 @@ add_action( 'plugins_loaded', function() {
 	}
 
 	// Checkout hooks
-	add_action( 'woocommerce_after_checkout_form', 'wc_loyalty_coupon_gift_section' );
+	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_coupon_gift_section' );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_coupon_validate_gift' );
 	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_coupon_save_gift_meta' );
 
@@ -47,6 +47,10 @@ add_action( 'plugins_loaded', function() {
 	// Hook into order completion
 	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_coupon_create_coupon' );
 
+	// Email hooks
+	add_filter( 'woocommerce_email_classes', 'wc_loyalty_coupon_register_emails' );
+	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_coupon_send_coupon_email' );
+
 	// Admin hooks
 	if ( is_admin() ) {
 		add_action( 'admin_menu', 'wc_loyalty_coupon_add_menu' );
@@ -54,6 +58,77 @@ add_action( 'plugins_loaded', function() {
 		add_action( 'admin_post_wc_loyalty_delete', 'wc_loyalty_coupon_delete_coupon' );
 	}
 }, 20 );
+
+/**
+ * Register custom email classes
+ */
+function wc_loyalty_coupon_register_emails( $emails ) {
+	if ( ! class_exists( 'WC_Loyalty_Coupon_Email_Personal' ) ) {
+		include plugin_dir_path( __FILE__ ) . 'emails/class-wc-loyalty-coupon-email-personal.php';
+		$emails['WC_Loyalty_Coupon_Email_Personal'] = new WC_Loyalty_Coupon_Email_Personal();
+	}
+
+	if ( ! class_exists( 'WC_Loyalty_Coupon_Email_Gift' ) ) {
+		include plugin_dir_path( __FILE__ ) . 'emails/class-wc-loyalty-coupon-email-gift.php';
+		$emails['WC_Loyalty_Coupon_Email_Gift'] = new WC_Loyalty_Coupon_Email_Gift();
+	}
+
+	return $emails;
+}
+
+/**
+ * Send coupon email via WooCommerce
+ */
+function wc_loyalty_coupon_send_coupon_email( $order_id ) {
+	$order = wc_get_order( $order_id );
+
+	if ( ! $order ) {
+		return;
+	}
+
+	// Get gift choice
+	$gift_choice = get_post_meta( $order_id, '_loyalty_gift_choice', true );
+
+	// Get coupon info
+	$args = array(
+		'post_type'      => 'shop_coupon',
+		'posts_per_page' => 1,
+		'orderby'        => 'ID',
+		'order'          => 'DESC',
+		'meta_query'     => array(
+			array(
+				'key'   => '_loyalty_order_id',
+				'value' => $order_id,
+			),
+		),
+	);
+
+	$query = new WP_Query( $args );
+
+	if ( ! $query->have_posts() ) {
+		return;
+	}
+
+	$coupon_post = $query->posts[0];
+	$coupon = new WC_Coupon( $coupon_post->ID );
+
+	// Determine recipient
+	if ( 'friend' === $gift_choice ) {
+		$recipient_email = get_post_meta( $order_id, '_loyalty_friend_email', true );
+		$email_class = 'WC_Loyalty_Coupon_Email_Gift';
+	} else {
+		$recipient_email = $order->get_billing_email();
+		$email_class = 'WC_Loyalty_Coupon_Email_Personal';
+	}
+
+	// Send email
+	$mailer = WC()->mailer();
+	$email = $mailer->emails[ $email_class ];
+
+	if ( $email ) {
+		$email->trigger( $order_id, $coupon, $recipient_email );
+	}
+}
 
 /**
  * Display cart notice if qualifies
@@ -249,45 +324,8 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 	if ( $result ) {
 		update_post_meta( $order_id, '_loyalty_coupon_created', current_time( 'mysql' ) );
 		update_post_meta( $coupon->get_id(), '_loyalty_order_id', $order_id );
-
-		// Send email notification
-		wc_loyalty_coupon_send_email( $recipient_email, $code, $coupon_amount, $gift_choice === 'friend' );
+		// Email will be sent via wc_loyalty_coupon_send_coupon_email action
 	}
-}
-
-/**
- * Send coupon email to recipient
- */
-function wc_loyalty_coupon_send_email( $recipient_email, $coupon_code, $coupon_amount, $is_gift = false ) {
-	$blogname = get_option( 'blogname' );
-	$subject = $is_gift ? 'You\'ve Been Gifted a $' . number_format( $coupon_amount, 2 ) . ' Coupon!' : 'Your $' . number_format( $coupon_amount, 2 ) . ' Loyalty Coupon!';
-
-	if ( $is_gift ) {
-		$message = sprintf(
-			"Great news!\n\n" .
-			"A friend has gifted you a <strong>$%s coupon</strong> from %s!\n\n" .
-			"<strong>Your Coupon Code:</strong> %s\n\n" .
-			"This coupon is valid for 30 days and can be used on your next purchase.\n\n" .
-			"Happy shopping!",
-			number_format( $coupon_amount, 2 ),
-			$blogname,
-			$coupon_code
-		);
-	} else {
-		$message = sprintf(
-			"Thank you for your purchase!\n\n" .
-			"As a valued customer, you've earned a <strong>$%s loyalty coupon</strong> for your next purchase!\n\n" .
-			"<strong>Your Coupon Code:</strong> %s\n\n" .
-			"This coupon is valid for 30 days.\n\n" .
-			"Happy shopping!",
-			number_format( $coupon_amount, 2 ),
-			$coupon_code
-		);
-	}
-
-	$headers = array( 'Content-Type: text/html; charset=UTF-8' );
-
-	wp_mail( $recipient_email, $subject, nl2br( $message ), $headers );
 }
 
 /**
