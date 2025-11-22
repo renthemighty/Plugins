@@ -46,7 +46,9 @@ function wc_loyalty_init() {
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
 	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_save_meta' );
 
-	// Hook into both processing and completed statuses
+	// Hook into payment completion (fires immediately when payment succeeds)
+	add_action( 'woocommerce_payment_complete', 'wc_loyalty_create_coupon', 10, 1 );
+	// Also hook into status changes as backup
 	add_action( 'woocommerce_order_status_processing', 'wc_loyalty_create_coupon', 10, 1 );
 	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_create_coupon', 10, 1 );
 
