@@ -35,6 +35,15 @@ add_action( 'plugins_loaded', function() {
 		return;
 	}
 
+	// Checkout hooks
+	add_action( 'woocommerce_after_checkout_form', 'wc_loyalty_coupon_gift_section' );
+	add_action( 'woocommerce_checkout_process', 'wc_loyalty_coupon_validate_gift' );
+	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_coupon_save_gift_meta' );
+
+	// Cart and checkout notices
+	add_action( 'woocommerce_before_cart', 'wc_loyalty_coupon_cart_notice' );
+	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_coupon_checkout_notice' );
+
 	// Hook into order completion
 	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_coupon_create_coupon' );
 
@@ -45,6 +54,142 @@ add_action( 'plugins_loaded', function() {
 		add_action( 'admin_post_wc_loyalty_delete', 'wc_loyalty_coupon_delete_coupon' );
 	}
 }, 20 );
+
+/**
+ * Display cart notice if qualifies
+ */
+function wc_loyalty_coupon_cart_notice() {
+	$cart_total = WC()->cart->get_total( false );
+	$min_amount = (float) get_option( 'wc_loyalty_coupon_min_amount', 250 );
+	$coupon_amount = (float) get_option( 'wc_loyalty_coupon_amount', 35 );
+
+	if ( $cart_total >= $min_amount ) {
+		wc_print_notice(
+			sprintf(
+				'🎁 <strong>Great news!</strong> Your cart qualifies for a <strong>$%s loyalty gift coupon</strong>! At checkout, you can choose to keep it or send it to a friend.',
+				number_format( $coupon_amount, 2 )
+			),
+			'success'
+		);
+	}
+}
+
+/**
+ * Display checkout notice if qualifies
+ */
+function wc_loyalty_coupon_checkout_notice() {
+	$cart_total = WC()->cart->get_total( false );
+	$min_amount = (float) get_option( 'wc_loyalty_coupon_min_amount', 250 );
+	$coupon_amount = (float) get_option( 'wc_loyalty_coupon_amount', 35 );
+
+	if ( $cart_total >= $min_amount ) {
+		wc_print_notice(
+			sprintf(
+				'🎁 <strong>You Qualify!</strong> You\'ll receive a <strong>$%s loyalty coupon</strong> for your next purchase after you complete this order. Choose below to keep it or give it to a friend!',
+				number_format( $coupon_amount, 2 )
+			),
+			'success'
+		);
+	}
+}
+
+/**
+ * Add gift section to checkout
+ */
+function wc_loyalty_coupon_gift_section() {
+	$cart_total = WC()->cart->get_total( false );
+	$min_amount = (float) get_option( 'wc_loyalty_coupon_min_amount', 250 );
+
+	if ( $cart_total < $min_amount ) {
+		return;
+	}
+
+	$coupon_amount = (float) get_option( 'wc_loyalty_coupon_amount', 35 );
+	$gift_choice = isset( $_POST['wc_loyalty_gift_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_gift_choice'] ) : 'keep';
+	$friend_email = isset( $_POST['wc_loyalty_friend_email'] ) ? sanitize_email( $_POST['wc_loyalty_friend_email'] ) : '';
+	?>
+	<div id="wc_loyalty_gift_section" style="background: #f5f5f5; padding: 20px; margin: 20px 0; border-left: 4px solid #0073aa; border-radius: 4px;">
+		<h3 style="margin-top: 0;">Your Loyalty Gift - $<?php echo number_format( $coupon_amount, 2 ); ?> Coupon</h3>
+		<p>You've earned a loyalty coupon! How would you like to use it?</p>
+
+		<div style="margin: 15px 0;">
+			<label style="display: block; margin-bottom: 10px;">
+				<input type="radio" name="wc_loyalty_gift_choice" value="keep" <?php checked( $gift_choice, 'keep' ); ?> onchange="wc_loyalty_toggle_friend_email()" />
+				<strong>Keep it for myself</strong>
+				<span style="color: #666; font-size: 14px; display: block; margin-left: 24px;">The coupon will be sent to your email address</span>
+			</label>
+
+			<label style="display: block; margin-bottom: 10px;">
+				<input type="radio" name="wc_loyalty_gift_choice" value="friend" <?php checked( $gift_choice, 'friend' ); ?> onchange="wc_loyalty_toggle_friend_email()" />
+				<strong>Send it to a friend</strong>
+				<span style="color: #666; font-size: 14px; display: block; margin-left: 24px;">Share the love and spread the savings!</span>
+			</label>
+		</div>
+
+		<div id="wc_loyalty_friend_email_field" style="display: <?php echo 'friend' === $gift_choice ? 'block' : 'none'; ?>; margin: 15px 0;">
+			<label for="wc_loyalty_friend_email" style="display: block; margin-bottom: 8px; font-weight: bold;">Friend's Email Address</label>
+			<input type="email" id="wc_loyalty_friend_email" name="wc_loyalty_friend_email" placeholder="friend@example.com" value="<?php echo esc_attr( $friend_email ); ?>" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; box-sizing: border-box;" />
+			<p style="font-size: 13px; color: #666; margin: 5px 0 0;">They'll receive an email with the coupon code after your order is complete.</p>
+		</div>
+	</div>
+
+	<script type="text/javascript">
+		function wc_loyalty_toggle_friend_email() {
+			var choice = document.querySelector('input[name="wc_loyalty_gift_choice"]:checked').value;
+			var emailField = document.getElementById('wc_loyalty_friend_email_field');
+			if ( choice === 'friend' ) {
+				emailField.style.display = 'block';
+				document.getElementById('wc_loyalty_friend_email').required = true;
+			} else {
+				emailField.style.display = 'none';
+				document.getElementById('wc_loyalty_friend_email').required = false;
+			}
+		}
+	</script>
+	<?php
+}
+
+/**
+ * Validate gift field at checkout
+ */
+function wc_loyalty_coupon_validate_gift() {
+	$cart_total = WC()->cart->get_total( false );
+	$min_amount = (float) get_option( 'wc_loyalty_coupon_min_amount', 250 );
+
+	if ( $cart_total < $min_amount ) {
+		return;
+	}
+
+	$gift_choice = isset( $_POST['wc_loyalty_gift_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_gift_choice'] ) : 'keep';
+
+	if ( 'friend' === $gift_choice ) {
+		$friend_email = isset( $_POST['wc_loyalty_friend_email'] ) ? sanitize_email( $_POST['wc_loyalty_friend_email'] ) : '';
+
+		if ( ! $friend_email || ! is_email( $friend_email ) ) {
+			wc_add_notice( 'Please enter a valid email address for your friend.', 'error' );
+		}
+	}
+}
+
+/**
+ * Save gift choice to order meta
+ */
+function wc_loyalty_coupon_save_gift_meta( $order_id ) {
+	$cart_total = WC()->cart->get_total( false );
+	$min_amount = (float) get_option( 'wc_loyalty_coupon_min_amount', 250 );
+
+	if ( $cart_total < $min_amount ) {
+		return;
+	}
+
+	$gift_choice = isset( $_POST['wc_loyalty_gift_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_gift_choice'] ) : 'keep';
+	update_post_meta( $order_id, '_loyalty_gift_choice', $gift_choice );
+
+	if ( 'friend' === $gift_choice ) {
+		$friend_email = isset( $_POST['wc_loyalty_friend_email'] ) ? sanitize_email( $_POST['wc_loyalty_friend_email'] ) : '';
+		update_post_meta( $order_id, '_loyalty_friend_email', $friend_email );
+	}
+}
 
 /**
  * Create loyalty coupon on order completion
@@ -70,9 +215,16 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 
 	$coupon_amount = (float) get_option( 'wc_loyalty_coupon_amount', 35 );
 	$days_valid = (int) get_option( 'wc_loyalty_coupon_days_valid', 30 );
-	$customer_email = $order->get_billing_email();
 
-	if ( ! $customer_email ) {
+	// Determine recipient email based on gift choice
+	$gift_choice = get_post_meta( $order_id, '_loyalty_gift_choice', true );
+	if ( 'friend' === $gift_choice ) {
+		$recipient_email = get_post_meta( $order_id, '_loyalty_friend_email', true );
+	} else {
+		$recipient_email = $order->get_billing_email();
+	}
+
+	if ( ! $recipient_email ) {
 		return;
 	}
 
@@ -87,7 +239,7 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 	$coupon->set_usage_limit( 1 );
 	$coupon->set_usage_limit_per_user( 1 );
 	$coupon->set_individual_use( true );
-	$coupon->set_email_restrictions( array( $customer_email ) );
+	$coupon->set_email_restrictions( array( $recipient_email ) );
 
 	$expiry = strtotime( "+{$days_valid} days" );
 	$coupon->set_date_expires( $expiry );
@@ -97,7 +249,45 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 	if ( $result ) {
 		update_post_meta( $order_id, '_loyalty_coupon_created', current_time( 'mysql' ) );
 		update_post_meta( $coupon->get_id(), '_loyalty_order_id', $order_id );
+
+		// Send email notification
+		wc_loyalty_coupon_send_email( $recipient_email, $code, $coupon_amount, $gift_choice === 'friend' );
 	}
+}
+
+/**
+ * Send coupon email to recipient
+ */
+function wc_loyalty_coupon_send_email( $recipient_email, $coupon_code, $coupon_amount, $is_gift = false ) {
+	$blogname = get_option( 'blogname' );
+	$subject = $is_gift ? 'You\'ve Been Gifted a $' . number_format( $coupon_amount, 2 ) . ' Coupon!' : 'Your $' . number_format( $coupon_amount, 2 ) . ' Loyalty Coupon!';
+
+	if ( $is_gift ) {
+		$message = sprintf(
+			"Great news!\n\n" .
+			"A friend has gifted you a <strong>$%s coupon</strong> from %s!\n\n" .
+			"<strong>Your Coupon Code:</strong> %s\n\n" .
+			"This coupon is valid for 30 days and can be used on your next purchase.\n\n" .
+			"Happy shopping!",
+			number_format( $coupon_amount, 2 ),
+			$blogname,
+			$coupon_code
+		);
+	} else {
+		$message = sprintf(
+			"Thank you for your purchase!\n\n" .
+			"As a valued customer, you've earned a <strong>$%s loyalty coupon</strong> for your next purchase!\n\n" .
+			"<strong>Your Coupon Code:</strong> %s\n\n" .
+			"This coupon is valid for 30 days.\n\n" .
+			"Happy shopping!",
+			number_format( $coupon_amount, 2 ),
+			$coupon_code
+		);
+	}
+
+	$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+
+	wp_mail( $recipient_email, $subject, nl2br( $message ), $headers );
 }
 
 /**
@@ -336,6 +526,8 @@ function wc_loyalty_coupon_table( $coupons ) {
 			<tr>
 				<th>Code</th>
 				<th>Amount</th>
+				<th>Type</th>
+				<th>Recipient</th>
 				<th>Created</th>
 				<th>Expires</th>
 				<th>Status</th>
@@ -349,13 +541,16 @@ function wc_loyalty_coupon_table( $coupons ) {
 					add_query_arg( array( 'action' => 'wc_loyalty_delete', 'id' => $coupon['id'] ), admin_url( 'admin-post.php' ) ),
 					'wc_loyalty_delete_' . $coupon['id']
 				);
+				$type_badge = 'Gift' === $coupon['type'] ? '<span style="background: #2271b1; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px;">🎁 Gift</span>' : '<span style="background: #117722; color: white; padding: 2px 8px; border-radius: 3px; font-size: 12px;">Personal</span>';
 				?>
 				<tr>
 					<td><strong><?php echo esc_html( $coupon['code'] ); ?></strong></td>
 					<td>$<?php echo number_format( $coupon['amount'], 2 ); ?></td>
+					<td><?php echo $type_badge; ?></td>
+					<td><?php echo esc_html( $coupon['recipient'] ); ?></td>
 					<td><?php echo esc_html( $coupon['created'] ); ?></td>
 					<td><?php echo esc_html( $coupon['expires'] ); ?></td>
-					<td><?php echo $coupon['used'] ? '<span style="color: green;">Used</span>' : '<span style="color: orange;">Unused</span>'; ?></td>
+					<td><?php echo $coupon['used'] ? '<span style="color: green;">✓ Used</span>' : '<span style="color: orange;">⏱ Unused</span>'; ?></td>
 					<td><a href="<?php echo esc_url( $delete_url ); ?>" class="button button-small" onclick="return confirm('Delete this coupon?');">Delete</a></td>
 				</tr>
 				<?php
@@ -382,19 +577,35 @@ function wc_loyalty_get_all_coupons() {
 
 	foreach ( $query->posts as $post ) {
 		// Only include loyalty coupons
-		if ( ! get_post_meta( $post->ID, '_loyalty_order_id', true ) && ! get_post_meta( $post->ID, '_loyalty_coupon_created', true ) ) {
+		$order_id = get_post_meta( $post->ID, '_loyalty_order_id', true );
+		if ( ! $order_id ) {
 			continue;
 		}
 
 		$coupon = new WC_Coupon( $post->ID );
+		$order = wc_get_order( $order_id );
+		$gift_choice = get_post_meta( $order_id, '_loyalty_gift_choice', true );
+		$friend_email = get_post_meta( $order_id, '_loyalty_friend_email', true );
+
+		$recipient = 'Unknown';
+		$type = 'Personal';
+
+		if ( 'friend' === $gift_choice && $friend_email ) {
+			$recipient = $friend_email;
+			$type = 'Gift';
+		} elseif ( $order ) {
+			$recipient = $order->get_billing_email();
+		}
 
 		$results[] = array(
-			'id'      => $post->ID,
-			'code'    => $coupon->get_code(),
-			'amount'  => $coupon->get_amount(),
-			'created' => get_the_time( 'Y-m-d H:i', $post->ID ),
-			'expires' => $coupon->get_date_expires() ? $coupon->get_date_expires()->format( 'Y-m-d' ) : 'Never',
-			'used'    => $coupon->get_usage_count() > 0,
+			'id'        => $post->ID,
+			'code'      => $coupon->get_code(),
+			'amount'    => $coupon->get_amount(),
+			'created'   => get_the_time( 'Y-m-d H:i', $post->ID ),
+			'expires'   => $coupon->get_date_expires() ? $coupon->get_date_expires()->format( 'Y-m-d' ) : 'Never',
+			'used'      => $coupon->get_usage_count() > 0,
+			'type'      => $type,
+			'recipient' => $recipient,
 		);
 	}
 
