@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Loyalty Coupon
  * Description: Automatically issue $35 coupons for next purchase when customers spend over $250
- * Version: 1.0.8
+ * Version: 1.0.9
  * Author: Your Name
  * License: GPL v2 or later
  */
@@ -45,6 +45,7 @@ function wc_loyalty_init() {
 		add_action( 'admin_menu', 'wc_loyalty_admin_menu' );
 		add_action( 'admin_init', 'wc_loyalty_admin_init' );
 		add_action( 'add_meta_boxes', 'wc_loyalty_add_order_metabox' );
+		add_action( 'admin_init', 'wc_loyalty_handle_resend_email' );
 		return;
 	}
 
@@ -251,8 +252,88 @@ function wc_loyalty_save_meta_from_thankyou( $order_id ) {
 }
 
 /**
- * Create coupon on order status change
+ * Build and send loyalty coupon email
  */
+function wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order_id ) {
+	error_log( "WC Loyalty Coupon: Building email for $recipient - Code: $code" );
+
+	// Email subject with store name
+	$blogname = get_option( 'blogname' );
+	$subject = 'You just got $' . number_format( $amount, 2 ) . ' off from ' . $blogname;
+
+	// Build HTML message with centered coupon code
+	$message = '<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">';
+	$message .= '<div style="max-width: 600px; margin: 0 auto;">';
+	$message .= '<h2 style="text-align: center; color: #0073aa; margin-bottom: 10px;">You\'ve Received a Coupon!</h2>';
+	$message .= '<p style="text-align: center; font-size: 14px; color: #666;">Thanks for being a valued customer!</p>';
+
+	$message .= '<p>Hi,</p>';
+	$message .= '<p>You\'ve been given a <strong>$' . number_format( $amount, 2 ) . ' discount coupon</strong> from ' . esc_html( $blogname ) . '!</p>';
+
+	$message .= '<h3 style="color: #0073aa; text-align: center;">Your Coupon Code</h3>';
+	$message .= '<div style="background: #f5f5f5; padding: 20px; border-left: 4px solid #0073aa; border-radius: 4px; text-align: center;">';
+	$message .= '<p style="font-size: 24px; font-weight: bold; color: #0073aa; letter-spacing: 3px; margin: 0;">' . esc_html( $code ) . '</p>';
+	$message .= '</div>';
+
+	$message .= '<h3 style="color: #333; margin-top: 20px;">Coupon Details</h3>';
+	$message .= '<ul style="padding-left: 20px;">';
+	$message .= '<li><strong>Discount:</strong> $' . number_format( $amount, 2 ) . '</li>';
+	$message .= '<li><strong>Valid Until:</strong> ' . date( 'Y-m-d', strtotime( "+$days days" ) ) . '</li>';
+	$message .= '<li><strong>Usage:</strong> Once per customer</li>';
+	$message .= '</ul>';
+
+	$message .= '<p style="text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #ddd;">Use this coupon code at checkout on your next purchase!</p>';
+	$message .= '<p style="text-align: center; color: #666; font-size: 12px;">Best regards,<br><strong>' . esc_html( $blogname ) . '</strong></p>';
+	$message .= '</div>';
+	$message .= '</body></html>';
+
+	// Send via WooCommerce's mailer system
+	if ( function_exists( 'WC' ) && WC()->mailer() ) {
+		error_log( "WC Loyalty Coupon: Attempting to send email to $recipient for order $order_id via WooCommerce mailer" );
+
+		// Get admin email for proper From header
+		$admin_email = get_option( 'admin_email' );
+		$from_name = get_option( 'blogname' );
+
+		// Prepare headers the WooCommerce way
+		$headers = array(
+			'Content-Type: text/html; charset=UTF-8',
+			'From: ' . $from_name . ' <' . $admin_email . '>',
+			'Reply-To: ' . $admin_email
+		);
+
+		// Use WooCommerce's mailer to send
+		$mailer = WC()->mailer();
+		$sent = $mailer->send( $recipient, $subject, $message, $headers );
+
+		if ( $sent ) {
+			error_log( "WC Loyalty Coupon: ✓ Email sent successfully to $recipient for order $order_id via WooCommerce mailer" );
+			return true;
+		} else {
+			error_log( "WC Loyalty Coupon: ✗ Email FAILED to send to $recipient for order $order_id. Check WooCommerce email settings." );
+			return false;
+		}
+	} else {
+		error_log( "WC Loyalty Coupon: ✗ WooCommerce mailer not available - falling back to wp_mail" );
+
+		// Fallback to wp_mail if mailer not available
+		$admin_email = get_option( 'admin_email' );
+		$headers = array(
+			'Content-Type: text/html; charset=UTF-8',
+			'From: ' . get_option( 'blogname' ) . ' <' . $admin_email . '>'
+		);
+
+		$sent = wp_mail( $recipient, $subject, $message, $headers );
+
+		if ( $sent ) {
+			error_log( "WC Loyalty Coupon: ✓ Email sent via wp_mail fallback to $recipient for order $order_id" );
+			return true;
+		} else {
+			error_log( "WC Loyalty Coupon: ✗ Email FAILED via wp_mail for $recipient for order $order_id" );
+			return false;
+		}
+	}
+}
 function wc_loyalty_create_coupon( $order_id ) {
 	error_log( "WC Loyalty Coupon: *** CREATE_COUPON HOOK TRIGGERED for order $order_id ***" );
 
@@ -365,71 +446,8 @@ function wc_loyalty_create_coupon( $order_id ) {
 		$order->add_order_note( $note_text, false );
 		error_log( "WC Loyalty Coupon: Added order note to order $order_id: $note_text" );
 
-		// Send email via WooCommerce email system
-		$subject = 'Your $' . number_format( $amount, 2 ) . ' Coupon';
-
-		// Build HTML message
-		$blogname = get_option( 'blogname' );
-		$message = '<html><body>';
-		$message .= '<h2>You\'ve Received a Coupon!</h2>';
-		$message .= '<p>Hi,</p>';
-		$message .= '<p>You\'ve been given a <strong>$' . number_format( $amount, 2 ) . ' discount coupon</strong> from ' . esc_html( $blogname ) . '!</p>';
-		$message .= '<h3 style="color: #0073aa;">Your Coupon Code</h3>';
-		$message .= '<div style="background: #f5f5f5; padding: 15px; border-left: 4px solid #0073aa; border-radius: 4px;">';
-		$message .= '<p style="font-size: 18px; font-weight: bold; color: #0073aa; letter-spacing: 2px;">' . esc_html( $code ) . '</p>';
-		$message .= '</div>';
-		$message .= '<h3>Coupon Details</h3>';
-		$message .= '<ul>';
-		$message .= '<li><strong>Discount:</strong> $' . number_format( $amount, 2 ) . '</li>';
-		$message .= '<li><strong>Valid Until:</strong> ' . date( 'Y-m-d', strtotime( "+$days days" ) ) . '</li>';
-		$message .= '<li><strong>Usage:</strong> Once per customer</li>';
-		$message .= '</ul>';
-		$message .= '<p>Use this coupon code at checkout on your next purchase!</p>';
-		$message .= '<p>Best regards,<br>' . esc_html( $blogname ) . '</p>';
-		$message .= '</body></html>';
-
-		// Send via WooCommerce's mailer system
-		if ( function_exists( 'WC' ) && WC()->mailer() ) {
-			error_log( "WC Loyalty Coupon: Attempting to send email to $recipient for order $order_id via WooCommerce mailer" );
-
-			// Get admin email for proper From header
-			$admin_email = get_option( 'admin_email' );
-			$from_name = get_option( 'blogname' );
-
-			// Prepare headers the WooCommerce way
-			$headers = array(
-				'Content-Type: text/html; charset=UTF-8',
-				'From: ' . $from_name . ' <' . $admin_email . '>',
-				'Reply-To: ' . $admin_email
-			);
-
-			// Use WooCommerce's mailer to send
-			$mailer = WC()->mailer();
-			$sent = $mailer->send( $recipient, $subject, $message, $headers );
-
-			if ( $sent ) {
-				error_log( "WC Loyalty Coupon: ✓ Email sent successfully to $recipient for order $order_id via WooCommerce mailer" );
-			} else {
-				error_log( "WC Loyalty Coupon: ✗ Email FAILED to send to $recipient for order $order_id. Check WooCommerce email settings." );
-			}
-		} else {
-			error_log( "WC Loyalty Coupon: ✗ WooCommerce mailer not available - falling back to wp_mail" );
-
-			// Fallback to wp_mail if mailer not available
-			$admin_email = get_option( 'admin_email' );
-			$headers = array(
-				'Content-Type: text/html; charset=UTF-8',
-				'From: ' . get_option( 'blogname' ) . ' <' . $admin_email . '>'
-			);
-
-			$sent = wp_mail( $recipient, $subject, $message, $headers );
-
-			if ( $sent ) {
-				error_log( "WC Loyalty Coupon: ✓ Email sent via wp_mail fallback to $recipient for order $order_id" );
-			} else {
-				error_log( "WC Loyalty Coupon: ✗ Email FAILED via wp_mail for $recipient for order $order_id" );
-			}
-		}
+		// Send email using the dedicated email function
+		wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order_id );
 
 	} catch ( Exception $e ) {
 		error_log( 'WC Loyalty Coupon Error: ' . $e->getMessage() );
@@ -535,7 +553,112 @@ function wc_loyalty_order_metabox_content( $post ) {
 			</tr>
 		</table>
 	</div>
+
+	<!-- Resend Email Button -->
+	<div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+		<form method="post" style="display: inline;">
+			<?php wp_nonce_field( 'wc_loyalty_resend_email_' . $order_id, 'wc_loyalty_nonce' ); ?>
+			<input type="hidden" name="wc_loyalty_resend_email" value="1">
+			<input type="hidden" name="order_id" value="<?php echo esc_attr( $order_id ); ?>">
+			<button type="submit" class="button button-primary" style="background: #0073aa; border-color: #005a87;">📧 Resend Email to <?php echo $choice === 'gift' ? 'Friend' : 'Customer'; ?></button>
+		</form>
+	</div>
 	<?php
+}
+
+/**
+ * Handle resend email form submission from order metabox
+ */
+function wc_loyalty_handle_resend_email() {
+	// Check if this is a resend email request
+	if ( ! isset( $_POST['wc_loyalty_resend_email'] ) || ! isset( $_POST['order_id'] ) ) {
+		return;
+	}
+
+	// Verify nonce
+	$order_id = absint( $_POST['order_id'] );
+	if ( ! isset( $_POST['wc_loyalty_nonce'] ) || ! wp_verify_nonce( $_POST['wc_loyalty_nonce'], 'wc_loyalty_resend_email_' . $order_id ) ) {
+		wp_die( 'Security check failed' );
+	}
+
+	// Check capability
+	if ( ! current_user_can( 'manage_woocommerce' ) ) {
+		wp_die( 'Unauthorized' );
+	}
+
+	error_log( "WC Loyalty Coupon: Admin requested resend email for order $order_id" );
+
+	// Get the order
+	$order = wc_get_order( $order_id );
+	if ( ! $order ) {
+		wp_die( 'Order not found' );
+	}
+
+	// Check if loyalty coupon exists for this order
+	$processed = get_post_meta( $order_id, '_wc_loyalty_processed', true );
+	if ( ! $processed ) {
+		wp_die( 'No loyalty coupon for this order' );
+	}
+
+	// Get choice and recipient
+	$choice = get_post_meta( $order_id, '_wc_loyalty_choice', true );
+	if ( 'gift' === $choice ) {
+		$recipient = get_post_meta( $order_id, '_wc_loyalty_friend_email', true );
+	} else {
+		$recipient = $order->get_billing_email();
+	}
+
+	if ( ! $recipient ) {
+		wp_die( 'Recipient not found' );
+	}
+
+	// Get coupon
+	global $wpdb;
+	$coupon_id = $wpdb->get_var( $wpdb->prepare(
+		"SELECT post_id FROM $wpdb->postmeta WHERE meta_key = '_wc_loyalty_order_id' AND meta_value = %d LIMIT 1",
+		$order_id
+	) );
+
+	if ( ! $coupon_id ) {
+		wp_die( 'Coupon not found' );
+	}
+
+	// Get coupon details
+	$coupon = new WC_Coupon( $coupon_id );
+	$code = $coupon->get_code();
+	$amount = $coupon->get_amount();
+	$days = intval( get_option( 'wc_loyalty_coupon_days_valid', 30 ) );
+
+	// Send email
+	error_log( "WC Loyalty Coupon: Resending email to $recipient for order $order_id" );
+	$sent = wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order_id );
+
+	if ( $sent ) {
+		// Add admin note about resend
+		$order->add_order_note( 'Loyalty coupon email resent to ' . esc_html( $recipient ), false );
+		error_log( "WC Loyalty Coupon: ✓ Email resent successfully for order $order_id" );
+
+		// Redirect back with success message
+		wp_safe_remote_post(
+			add_query_arg( array(
+				'page' => 'wc-orders',
+				'action' => 'edit',
+				'id' => $order_id
+			), admin_url( 'admin.php' ) ),
+			array(
+				'blocking' => false,
+			)
+		);
+
+		wp_redirect( add_query_arg( array(
+			'post' => $order_id,
+			'action' => 'edit',
+			'wc_loyalty_resend' => 'success'
+		), admin_url( 'post.php' ) ) );
+		exit;
+	} else {
+		wp_die( 'Failed to send email. Check error logs.' );
+	}
 }
 
 /**
