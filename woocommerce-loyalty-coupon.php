@@ -115,18 +115,40 @@ function wc_loyalty_coupon_send_coupon_email( $order_id ) {
 	// Determine recipient
 	if ( 'friend' === $gift_choice ) {
 		$recipient_email = get_post_meta( $order_id, '_loyalty_friend_email', true );
-		$email_class = 'WC_Loyalty_Coupon_Email_Gift';
+		$is_gift = true;
 	} else {
 		$recipient_email = $order->get_billing_email();
-		$email_class = 'WC_Loyalty_Coupon_Email_Personal';
+		$is_gift = false;
 	}
 
-	// Send email
-	$mailer = WC()->mailer();
-	$email = $mailer->emails[ $email_class ];
+	if ( ! $recipient_email ) {
+		return;
+	}
 
-	if ( $email ) {
-		$email->trigger( $order_id, $coupon, $recipient_email );
+	// Send via WC email system
+	try {
+		$mailer = WC()->mailer();
+
+		if ( $is_gift ) {
+			// Gift email
+			foreach ( $mailer->emails as $email ) {
+				if ( is_a( $email, 'WC_Loyalty_Coupon_Email_Gift' ) ) {
+					$email->trigger( $order_id, $coupon, $recipient_email );
+					break;
+				}
+			}
+		} else {
+			// Personal email
+			foreach ( $mailer->emails as $email ) {
+				if ( is_a( $email, 'WC_Loyalty_Coupon_Email_Personal' ) ) {
+					$email->trigger( $order_id, $coupon, $recipient_email );
+					break;
+				}
+			}
+		}
+	} catch ( Exception $e ) {
+		// Fallback to silent fail to avoid breaking orders
+		error_log( 'WC Loyalty Coupon Email Error: ' . $e->getMessage() );
 	}
 }
 

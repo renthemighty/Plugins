@@ -74,38 +74,28 @@ class WC_Loyalty_Coupon_Email_Gift extends WC_Email {
 	 * Get email content HTML
 	 */
 	public function get_content_html() {
-		return wc_get_template_html(
-			$this->template_html,
-			array(
-				'order'         => $this->object,
-				'coupon'        => $this->coupon,
-				'email_heading' => $this->get_heading(),
-				'sent_to_admin' => false,
-				'plain_text'    => false,
-				'email'         => $this,
-			),
-			'',
-			$this->template_base
-		);
+		$order = $this->object;
+		$coupon = $this->coupon;
+		$email = $this;
+		$email_heading = $this->get_heading();
+
+		ob_start();
+		include plugin_dir_path( __FILE__ ) . 'templates/email-loyalty-coupon-gift.php';
+		return ob_get_clean();
 	}
 
 	/**
 	 * Get email content plain text
 	 */
 	public function get_content_plain() {
-		return wc_get_template_html(
-			$this->template_plain,
-			array(
-				'order'         => $this->object,
-				'coupon'        => $this->coupon,
-				'email_heading' => $this->get_heading(),
-				'sent_to_admin' => false,
-				'plain_text'    => true,
-				'email'         => $this,
-			),
-			'',
-			$this->template_base
-		);
+		$order = $this->object;
+		$coupon = $this->coupon;
+		$email = $this;
+		$email_heading = $this->get_heading();
+
+		ob_start();
+		include plugin_dir_path( __FILE__ ) . 'templates/email-loyalty-coupon-gift-plain.txt';
+		return ob_get_clean();
 	}
 
 	/**
