@@ -60,18 +60,25 @@ add_action( 'plugins_loaded', function() {
 }, 20 );
 
 /**
+ * Ensure email classes are loaded and registered
+ */
+function wc_loyalty_coupon_load_email_classes() {
+	if ( ! class_exists( 'WC_Loyalty_Coupon_Email_Personal' ) ) {
+		include plugin_dir_path( __FILE__ ) . 'emails/class-wc-loyalty-coupon-email-personal.php';
+	}
+	if ( ! class_exists( 'WC_Loyalty_Coupon_Email_Gift' ) ) {
+		include plugin_dir_path( __FILE__ ) . 'emails/class-wc-loyalty-coupon-email-gift.php';
+	}
+}
+
+/**
  * Register custom email classes
  */
 function wc_loyalty_coupon_register_emails( $emails ) {
-	if ( ! class_exists( 'WC_Loyalty_Coupon_Email_Personal' ) ) {
-		include plugin_dir_path( __FILE__ ) . 'emails/class-wc-loyalty-coupon-email-personal.php';
-		$emails['WC_Loyalty_Coupon_Email_Personal'] = new WC_Loyalty_Coupon_Email_Personal();
-	}
+	wc_loyalty_coupon_load_email_classes();
 
-	if ( ! class_exists( 'WC_Loyalty_Coupon_Email_Gift' ) ) {
-		include plugin_dir_path( __FILE__ ) . 'emails/class-wc-loyalty-coupon-email-gift.php';
-		$emails['WC_Loyalty_Coupon_Email_Gift'] = new WC_Loyalty_Coupon_Email_Gift();
-	}
+	$emails['WC_Loyalty_Coupon_Email_Personal'] = new WC_Loyalty_Coupon_Email_Personal();
+	$emails['WC_Loyalty_Coupon_Email_Gift'] = new WC_Loyalty_Coupon_Email_Gift();
 
 	return $emails;
 }
@@ -80,16 +87,20 @@ function wc_loyalty_coupon_register_emails( $emails ) {
  * Send coupon email via WooCommerce
  */
 function wc_loyalty_coupon_send_coupon_email( $order_id ) {
+	// Wait a moment for coupon to be fully saved
+	sleep( 1 );
+
 	$order = wc_get_order( $order_id );
 
 	if ( ! $order ) {
+		error_log( "WC Loyalty Coupon: Order $order_id not found" );
 		return;
 	}
 
 	// Get gift choice
 	$gift_choice = get_post_meta( $order_id, '_loyalty_gift_choice', true );
 
-	// Get coupon info
+	// Get coupon info - look for most recently created coupon for this order
 	$args = array(
 		'post_type'      => 'shop_coupon',
 		'posts_per_page' => 1,
@@ -106,11 +117,17 @@ function wc_loyalty_coupon_send_coupon_email( $order_id ) {
 	$query = new WP_Query( $args );
 
 	if ( ! $query->have_posts() ) {
+		error_log( "WC Loyalty Coupon: No coupon found for order $order_id" );
 		return;
 	}
 
 	$coupon_post = $query->posts[0];
 	$coupon = new WC_Coupon( $coupon_post->ID );
+
+	if ( ! $coupon || ! $coupon->get_code() ) {
+		error_log( "WC Loyalty Coupon: Coupon object invalid for order $order_id" );
+		return;
+	}
 
 	// Determine recipient
 	if ( 'friend' === $gift_choice ) {
@@ -122,33 +139,67 @@ function wc_loyalty_coupon_send_coupon_email( $order_id ) {
 	}
 
 	if ( ! $recipient_email ) {
+		error_log( "WC Loyalty Coupon: No recipient email for order $order_id" );
 		return;
 	}
+
+	// Load email classes
+	wc_loyalty_coupon_load_email_classes();
 
 	// Send via WC email system
 	try {
 		$mailer = WC()->mailer();
 
+		if ( ! is_object( $mailer ) || ! property_exists( $mailer, 'emails' ) ) {
+			error_log( "WC Loyalty Coupon: Mailer not available for order $order_id" );
+			return;
+		}
+
+		$email_sent = false;
+
 		if ( $is_gift ) {
 			// Gift email
-			foreach ( $mailer->emails as $email ) {
-				if ( is_a( $email, 'WC_Loyalty_Coupon_Email_Gift' ) ) {
-					$email->trigger( $order_id, $coupon, $recipient_email );
-					break;
+			if ( isset( $mailer->emails['WC_Loyalty_Coupon_Email_Gift'] ) ) {
+				$email = $mailer->emails['WC_Loyalty_Coupon_Email_Gift'];
+				$email->trigger( $order_id, $coupon, $recipient_email );
+				$email_sent = true;
+				error_log( "WC Loyalty Coupon: Gift email sent to $recipient_email for order $order_id" );
+			} else {
+				// Fallback to foreach
+				foreach ( $mailer->emails as $email ) {
+					if ( is_a( $email, 'WC_Loyalty_Coupon_Email_Gift' ) ) {
+						$email->trigger( $order_id, $coupon, $recipient_email );
+						$email_sent = true;
+						error_log( "WC Loyalty Coupon: Gift email sent (via loop) to $recipient_email for order $order_id" );
+						break;
+					}
 				}
 			}
 		} else {
 			// Personal email
-			foreach ( $mailer->emails as $email ) {
-				if ( is_a( $email, 'WC_Loyalty_Coupon_Email_Personal' ) ) {
-					$email->trigger( $order_id, $coupon, $recipient_email );
-					break;
+			if ( isset( $mailer->emails['WC_Loyalty_Coupon_Email_Personal'] ) ) {
+				$email = $mailer->emails['WC_Loyalty_Coupon_Email_Personal'];
+				$email->trigger( $order_id, $coupon, $recipient_email );
+				$email_sent = true;
+				error_log( "WC Loyalty Coupon: Personal email sent to $recipient_email for order $order_id" );
+			} else {
+				// Fallback to foreach
+				foreach ( $mailer->emails as $email ) {
+					if ( is_a( $email, 'WC_Loyalty_Coupon_Email_Personal' ) ) {
+						$email->trigger( $order_id, $coupon, $recipient_email );
+						$email_sent = true;
+						error_log( "WC Loyalty Coupon: Personal email sent (via loop) to $recipient_email for order $order_id" );
+						break;
+					}
 				}
 			}
 		}
+
+		if ( ! $email_sent ) {
+			error_log( "WC Loyalty Coupon: Email class not found in mailer for order $order_id" );
+		}
 	} catch ( Exception $e ) {
-		// Fallback to silent fail to avoid breaking orders
-		error_log( 'WC Loyalty Coupon Email Error: ' . $e->getMessage() );
+		error_log( 'WC Loyalty Coupon Email Error for order ' . $order_id . ': ' . $e->getMessage() );
 	}
 }
 
@@ -295,11 +346,13 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 	$order = wc_get_order( $order_id );
 
 	if ( ! $order ) {
+		error_log( "WC Loyalty Coupon: Order $order_id not found for coupon creation" );
 		return;
 	}
 
 	// Skip if already processed
 	if ( get_post_meta( $order_id, '_loyalty_coupon_created', true ) ) {
+		error_log( "WC Loyalty Coupon: Coupon already created for order $order_id" );
 		return;
 	}
 
@@ -307,6 +360,7 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 
 	if ( $order->get_total() < $min_amount ) {
 		update_post_meta( $order_id, '_loyalty_coupon_created', 'no_match' );
+		error_log( "WC Loyalty Coupon: Order $order_id total (" . $order->get_total() . ") below minimum ($min_amount)" );
 		return;
 	}
 
@@ -322,6 +376,7 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 	}
 
 	if ( ! $recipient_email ) {
+		error_log( "WC Loyalty Coupon: No recipient email for order $order_id" );
 		return;
 	}
 
@@ -344,9 +399,13 @@ function wc_loyalty_coupon_create_coupon( $order_id ) {
 	$result = $coupon->save();
 
 	if ( $result ) {
+		$coupon_id = $coupon->get_id();
 		update_post_meta( $order_id, '_loyalty_coupon_created', current_time( 'mysql' ) );
-		update_post_meta( $coupon->get_id(), '_loyalty_order_id', $order_id );
+		update_post_meta( $coupon_id, '_loyalty_order_id', $order_id );
+		error_log( "WC Loyalty Coupon: Coupon $coupon_id ($code) created for order $order_id, recipient: $recipient_email" );
 		// Email will be sent via wc_loyalty_coupon_send_coupon_email action
+	} else {
+		error_log( "WC Loyalty Coupon: Failed to save coupon for order $order_id" );
 	}
 }
 
