@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WooCommerce Loyalty Coupon
  * Description: Automatically issue $35 coupons for next purchase when customers spend over $250
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: Your Name
  * License: GPL v2 or later
  */
@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-// Activation
+// Activation hook
 register_activation_hook( __FILE__, 'wc_loyalty_activate' );
 
 function wc_loyalty_activate() {
@@ -24,62 +24,92 @@ function wc_loyalty_activate() {
 add_action( 'plugins_loaded', 'wc_loyalty_init', 20 );
 
 function wc_loyalty_init() {
-	if ( ! function_exists( 'WC' ) ) {
+	// Check if WooCommerce is active
+	if ( ! function_exists( 'WC' ) || ! class_exists( 'WC_Coupon' ) ) {
 		return;
 	}
 
+	// Admin only
 	if ( is_admin() ) {
 		add_action( 'admin_menu', 'wc_loyalty_admin_menu' );
 		add_action( 'admin_init', 'wc_loyalty_admin_init' );
 		return;
 	}
 
-	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form', 5 );
+	// Frontend only
+	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form' );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
 	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_save_meta' );
 	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_create_coupon' );
 }
 
-// Checkout form
-function wc_loyalty_checkout_form() {
-	if ( ! WC()->cart ) {
-		return;
+/**
+ * Check if customer qualifies for coupon
+ */
+function wc_loyalty_qualifies() {
+	try {
+		$wc = WC();
+		if ( ! $wc || ! $wc->cart ) {
+			return false;
+		}
+
+		$total = floatval( $wc->cart->get_total( false ) );
+		$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
+
+		return $total >= $min;
+	} catch ( Exception $e ) {
+		return false;
 	}
+}
 
-	$total = floatval( WC()->cart->get_total( false ) );
-	$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
-
-	if ( $total < $min ) {
+/**
+ * Render checkout form
+ */
+function wc_loyalty_checkout_form() {
+	if ( ! wc_loyalty_qualifies() ) {
 		return;
 	}
 
 	$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
 	$choice = isset( $_POST['wc_loyalty_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_choice'] ) : 'keep';
 	$email = isset( $_POST['wc_loyalty_email'] ) ? sanitize_email( $_POST['wc_loyalty_email'] ) : '';
+	?>
+	<div style="background:#f5f5f5;padding:20px;margin:20px 0;border-left:4px solid #0073aa;border-radius:4px;">
+		<h3>You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h3>
+		<p>What would you like to do with it?</p>
 
-	echo '<div style="background:#f5f5f5;padding:20px;margin:20px 0;border-left:4px solid #0073aa;border-radius:4px;">';
-	echo '<h3>You\'ve Earned a $' . number_format( $amount, 2 ) . ' Loyalty Coupon!</h3>';
-	echo '<p>What would you like to do with it?</p>';
-	echo '<label style="display:block;margin:10px 0;"><input type="radio" name="wc_loyalty_choice" value="keep" ' . checked( $choice, 'keep', false ) . ' onchange="toggleEmail()" /> Keep it for my next purchase</label>';
-	echo '<label style="display:block;margin:10px 0;"><input type="radio" name="wc_loyalty_choice" value="gift" ' . checked( $choice, 'gift', false ) . ' onchange="toggleEmail()" /> Send it to a friend</label>';
-	echo '<div id="friend_email_div" style="display:' . ( $choice === 'gift' ? 'block' : 'none' ) . ';margin:15px 0;">';
-	echo '<label>Friend\'s Email:</label>';
-	echo '<input type="email" name="wc_loyalty_email" placeholder="friend@example.com" value="' . esc_attr( $email ) . '" style="width:100%;padding:8px;box-sizing:border-box;" />';
-	echo '</div>';
-	echo '<script>function toggleEmail(){var e=document.querySelector(\'input[name="wc_loyalty_choice"]:checked\');document.getElementById("friend_email_div").style.display=e&&"gift"===e.value?"block":"none";}</script>';
-	echo '</div>';
+		<label style="display:block;margin:10px 0;">
+			<input type="radio" name="wc_loyalty_choice" value="keep" <?php checked( $choice, 'keep' ); ?> />
+			Keep it for my next purchase
+		</label>
+
+		<label style="display:block;margin:10px 0;">
+			<input type="radio" name="wc_loyalty_choice" value="gift" <?php checked( $choice, 'gift' ); ?> />
+			Send it to a friend
+		</label>
+
+		<div id="friend_email_div" style="display:<?php echo $choice === 'gift' ? 'block' : 'none'; ?>;margin:15px 0;">
+			<label>Friend's Email:</label>
+			<input type="email" name="wc_loyalty_email" placeholder="friend@example.com" value="<?php echo esc_attr( $email ); ?>" style="width:100%;padding:8px;box-sizing:border-box;" />
+		</div>
+
+		<script>
+		document.addEventListener('change', function(e) {
+			if ( e.target.name === 'wc_loyalty_choice' ) {
+				var div = document.getElementById('friend_email_div');
+				div.style.display = e.target.value === 'gift' ? 'block' : 'none';
+			}
+		});
+		</script>
+	</div>
+	<?php
 }
 
-// Validate checkout
+/**
+ * Validate checkout
+ */
 function wc_loyalty_validate_checkout() {
-	if ( ! WC()->cart ) {
-		return;
-	}
-
-	$total = floatval( WC()->cart->get_total( false ) );
-	$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
-
-	if ( $total < $min ) {
+	if ( ! wc_loyalty_qualifies() ) {
 		return;
 	}
 
@@ -93,16 +123,11 @@ function wc_loyalty_validate_checkout() {
 	}
 }
 
-// Save order metadata
+/**
+ * Save order meta
+ */
 function wc_loyalty_save_meta( $order_id ) {
-	if ( ! WC()->cart ) {
-		return;
-	}
-
-	$total = floatval( WC()->cart->get_total( false ) );
-	$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
-
-	if ( $total < $min ) {
+	if ( ! wc_loyalty_qualifies() ) {
 		return;
 	}
 
@@ -111,66 +136,106 @@ function wc_loyalty_save_meta( $order_id ) {
 
 	if ( 'gift' === $choice ) {
 		$email = isset( $_POST['wc_loyalty_email'] ) ? sanitize_email( $_POST['wc_loyalty_email'] ) : '';
-		update_post_meta( $order_id, '_wc_loyalty_friend_email', $email );
+		if ( $email ) {
+			update_post_meta( $order_id, '_wc_loyalty_friend_email', $email );
+		}
 	}
 }
 
-// Create coupon on order completion
+/**
+ * Create coupon on order complete
+ */
 function wc_loyalty_create_coupon( $order_id ) {
-	if ( get_post_meta( $order_id, '_wc_loyalty_processed', true ) ) {
-		return;
-	}
+	try {
+		// Check if already processed
+		if ( get_post_meta( $order_id, '_wc_loyalty_processed', true ) ) {
+			return;
+		}
 
-	$order = wc_get_order( $order_id );
-	if ( ! $order ) {
-		return;
-	}
+		// Get order
+		if ( ! function_exists( 'wc_get_order' ) ) {
+			return;
+		}
 
-	$total = floatval( $order->get_total() );
-	$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
+		$order = wc_get_order( $order_id );
+		if ( ! $order ) {
+			return;
+		}
 
-	if ( $total < $min ) {
-		return;
-	}
+		// Check if qualifies
+		$total = floatval( $order->get_total() );
+		$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
 
-	$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
-	$days = intval( get_option( 'wc_loyalty_coupon_days_valid', 30 ) );
-	$code = 'LOYALTY-' . $order_id . '-' . strtoupper( substr( md5( time() ), 0, 6 ) );
+		if ( $total < $min ) {
+			return;
+		}
 
-	$coupon = new WC_Coupon();
-	$coupon->set_code( $code );
-	$coupon->set_discount_type( 'fixed_cart' );
-	$coupon->set_amount( $amount );
-	$coupon->set_usage_limit( 1 );
-	$coupon->set_usage_limit_per_user( 1 );
-	$coupon->set_individual_use( true );
+		// Get settings
+		$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
+		$days = intval( get_option( 'wc_loyalty_coupon_days_valid', 30 ) );
 
-	$choice = get_post_meta( $order_id, '_wc_loyalty_choice', true );
-	if ( 'gift' === $choice ) {
-		$recipient = get_post_meta( $order_id, '_wc_loyalty_friend_email', true );
-	} else {
-		$recipient = $order->get_billing_email();
-	}
+		// Generate code
+		$code = 'LOYALTY-' . $order_id . '-' . strtoupper( substr( md5( time() ), 0, 6 ) );
 
-	if ( ! $recipient ) {
-		return;
-	}
+		// Create coupon
+		if ( ! class_exists( 'WC_Coupon' ) ) {
+			return;
+		}
 
-	$coupon->set_email_restrictions( array( $recipient ) );
-	$coupon->set_date_expires( strtotime( "+$days days" ) );
+		$coupon = new WC_Coupon();
+		$coupon->set_code( $code );
+		$coupon->set_discount_type( 'fixed_cart' );
+		$coupon->set_amount( $amount );
+		$coupon->set_usage_limit( 1 );
+		$coupon->set_usage_limit_per_user( 1 );
+		$coupon->set_individual_use( true );
 
-	if ( $coupon->save() ) {
+		// Get recipient
+		$choice = get_post_meta( $order_id, '_wc_loyalty_choice', true );
+		if ( 'gift' === $choice ) {
+			$recipient = get_post_meta( $order_id, '_wc_loyalty_friend_email', true );
+		} else {
+			$recipient = $order->get_billing_email();
+		}
+
+		if ( ! $recipient ) {
+			return;
+		}
+
+		// Set restrictions
+		$coupon->set_email_restrictions( array( $recipient ) );
+		$coupon->set_date_expires( strtotime( "+$days days" ) );
+
+		// Save coupon
+		$coupon_id = $coupon->save();
+		if ( ! $coupon_id ) {
+			return;
+		}
+
+		// Mark as processed
 		update_post_meta( $order_id, '_wc_loyalty_processed', '1' );
-		update_post_meta( $coupon->get_id(), '_wc_loyalty_order_id', $order_id );
+		update_post_meta( $coupon_id, '_wc_loyalty_order_id', $order_id );
 
+		// Send email
 		$subject = 'Your $' . number_format( $amount, 2 ) . ' Coupon';
-		$message = "You've received a coupon!\n\nCode: $code\nExpires: " . date( 'Y-m-d', strtotime( "+$days days" ) ) . "\n\nUse it at checkout!";
+		$message = "You've received a coupon!\n\n";
+		$message .= "Code: $code\n";
+		$message .= "Discount: $" . number_format( $amount, 2 ) . "\n";
+		$message .= "Expires: " . date( 'Y-m-d', strtotime( "+$days days" ) ) . "\n\n";
+		$message .= "Use it at checkout!";
 
-		wp_mail( $recipient, $subject, $message );
+		if ( function_exists( 'wp_mail' ) ) {
+			wp_mail( $recipient, $subject, $message );
+		}
+
+	} catch ( Exception $e ) {
+		error_log( 'WC Loyalty Coupon Error: ' . $e->getMessage() );
 	}
 }
 
-// Admin menu
+/**
+ * Admin menu
+ */
 function wc_loyalty_admin_menu() {
 	if ( ! current_user_can( 'manage_woocommerce' ) ) {
 		return;
@@ -186,14 +251,18 @@ function wc_loyalty_admin_menu() {
 	);
 }
 
-// Admin init
+/**
+ * Admin init
+ */
 function wc_loyalty_admin_init() {
 	register_setting( 'wc_loyalty_coupon_group', 'wc_loyalty_coupon_amount', array( 'sanitize_callback' => 'floatval' ) );
 	register_setting( 'wc_loyalty_coupon_group', 'wc_loyalty_coupon_min_amount', array( 'sanitize_callback' => 'floatval' ) );
 	register_setting( 'wc_loyalty_coupon_group', 'wc_loyalty_coupon_days_valid', array( 'sanitize_callback' => 'intval' ) );
 }
 
-// Admin page
+/**
+ * Admin page
+ */
 function wc_loyalty_admin_page() {
 	if ( ! current_user_can( 'manage_woocommerce' ) ) {
 		wp_die( 'Unauthorized' );
