@@ -87,9 +87,6 @@ function wc_loyalty_coupon_register_emails( $emails ) {
  * Send coupon email via WooCommerce
  */
 function wc_loyalty_coupon_send_coupon_email( $order_id ) {
-	// Wait a moment for coupon to be fully saved
-	sleep( 1 );
-
 	$order = wc_get_order( $order_id );
 
 	if ( ! $order ) {
