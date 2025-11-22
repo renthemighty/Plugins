@@ -25,7 +25,7 @@ function wc_loyalty_activate() {
 add_action( 'plugins_loaded', 'wc_loyalty_init', 20 );
 
 function wc_loyalty_init() {
-	error_log( 'WC Loyalty Coupon: Initializing plugin' );
+	error_log( 'WC Loyalty Coupon: Initializing plugin - Admin: ' . ( is_admin() ? 'yes' : 'no' ) );
 
 	// Check if WooCommerce is active
 	if ( ! function_exists( 'WC' ) || ! class_exists( 'WC_Coupon' ) ) {
@@ -33,31 +33,28 @@ function wc_loyalty_init() {
 		return;
 	}
 
-	// Admin only
+	// Register coupon creation hooks globally (must run on all requests)
+	error_log( 'WC Loyalty Coupon: Registering coupon creation hooks' );
+	add_action( 'woocommerce_payment_complete', 'wc_loyalty_create_coupon', 10, 1 );
+	add_action( 'woocommerce_order_status_processing', 'wc_loyalty_create_coupon', 10, 1 );
+	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_create_coupon', 10, 1 );
+
+	// Admin only hooks
 	if ( is_admin() ) {
+		error_log( 'WC Loyalty Coupon: Registering admin hooks' );
 		add_action( 'admin_menu', 'wc_loyalty_admin_menu' );
 		add_action( 'admin_init', 'wc_loyalty_admin_init' );
-		error_log( 'WC Loyalty Coupon: Loaded in admin' );
+		add_action( 'add_meta_boxes', 'wc_loyalty_add_order_metabox' );
 		return;
 	}
 
-	// Frontend only
+	// Frontend only hooks
+	error_log( 'WC Loyalty Coupon: Registering frontend hooks' );
 	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form' );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
 	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_save_meta' );
 
-	// Hook into payment completion (fires immediately when payment succeeds)
-	add_action( 'woocommerce_payment_complete', 'wc_loyalty_create_coupon', 10, 1 );
-	// Also hook into status changes as backup
-	add_action( 'woocommerce_order_status_processing', 'wc_loyalty_create_coupon', 10, 1 );
-	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_create_coupon', 10, 1 );
-
-	error_log( 'WC Loyalty Coupon: Loaded on frontend' );
-
-	// Add metabox to order page
-	if ( is_admin() ) {
-		add_action( 'add_meta_boxes', 'wc_loyalty_add_order_metabox' );
-	}
+	error_log( 'WC Loyalty Coupon: Plugin initialized successfully' );
 }
 
 /**
@@ -88,15 +85,19 @@ function wc_loyalty_qualifies() {
  * Render checkout form
  */
 function wc_loyalty_checkout_form() {
+	error_log( "WC Loyalty Coupon: *** CHECKOUT_FORM called - Checking if customer qualifies ***" );
 	if ( ! wc_loyalty_qualifies() ) {
+		error_log( "WC Loyalty Coupon: Customer does NOT qualify - hiding coupon form" );
 		return;
 	}
+
+	error_log( "WC Loyalty Coupon: ✓ Customer QUALIFIES - rendering coupon form" );
 
 	$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
 	$choice = isset( $_POST['wc_loyalty_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_choice'] ) : 'keep';
 	$email = isset( $_POST['wc_loyalty_email'] ) ? sanitize_email( $_POST['wc_loyalty_email'] ) : '';
 
-	error_log( "WC Loyalty Coupon: Rendering form. Choice: $choice, Email: $email" );
+	error_log( "WC Loyalty Coupon: Form rendering - Choice: $choice, Email: " . ( $email ? $email : 'NONE' ) );
 	?>
 	<div style="background:#f5f5f5;padding:20px;margin:20px 0;border-left:4px solid #0073aa;border-radius:4px;">
 		<h3>You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h3>
@@ -133,18 +134,22 @@ function wc_loyalty_checkout_form() {
  * Validate checkout
  */
 function wc_loyalty_validate_checkout() {
+	error_log( "WC Loyalty Coupon: *** VALIDATE_CHECKOUT called ***" );
 	if ( ! wc_loyalty_qualifies() ) {
+		error_log( "WC Loyalty Coupon: Checkout validation - Customer does NOT qualify" );
 		return;
 	}
 
 	$choice = isset( $_POST['wc_loyalty_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_choice'] ) : 'keep';
-	error_log( "WC Loyalty Coupon: Validating checkout. Choice: $choice" );
+	error_log( "WC Loyalty Coupon: Checkout validation - Choice: $choice, POST has wc_loyalty_choice? " . ( isset( $_POST['wc_loyalty_choice'] ) ? 'YES' : 'NO' ) );
 
 	if ( 'gift' === $choice ) {
 		$email = isset( $_POST['wc_loyalty_email'] ) ? sanitize_email( $_POST['wc_loyalty_email'] ) : '';
 		if ( ! $email || ! is_email( $email ) ) {
-			error_log( "WC Loyalty Coupon: Invalid email for gift: $email" );
+			error_log( "WC Loyalty Coupon: ✗ Invalid email for gift: '" . ( $email ? $email : 'EMPTY' ) . "'" );
 			wc_add_notice( 'Please enter a valid email for your friend.', 'error' );
+		} else {
+			error_log( "WC Loyalty Coupon: ✓ Gift email validation passed: $email" );
 		}
 	}
 }
@@ -153,12 +158,16 @@ function wc_loyalty_validate_checkout() {
  * Save order meta
  */
 function wc_loyalty_save_meta( $order_id ) {
+	error_log( "WC Loyalty Coupon: *** SAVE_META called for order $order_id ***" );
+
 	if ( ! wc_loyalty_qualifies() ) {
 		error_log( "WC Loyalty Coupon: Order $order_id doesn't qualify (cart check)" );
 		return;
 	}
 
 	$choice = isset( $_POST['wc_loyalty_choice'] ) ? sanitize_text_field( $_POST['wc_loyalty_choice'] ) : 'keep';
+	error_log( "WC Loyalty Coupon: POST data - choice: " . print_r( $_POST['wc_loyalty_choice'] ?? 'NOT SET', true ) . ", email: " . print_r( $_POST['wc_loyalty_email'] ?? 'NOT SET', true ) );
+
 	update_post_meta( $order_id, '_wc_loyalty_choice', $choice );
 	error_log( "WC Loyalty Coupon: Saved choice for order $order_id: $choice" );
 
@@ -167,6 +176,8 @@ function wc_loyalty_save_meta( $order_id ) {
 		if ( $email ) {
 			update_post_meta( $order_id, '_wc_loyalty_friend_email', $email );
 			error_log( "WC Loyalty Coupon: Saved friend email for order $order_id: $email" );
+		} else {
+			error_log( "WC Loyalty Coupon: Gift choice but no email provided for order $order_id" );
 		}
 	}
 }
@@ -175,11 +186,14 @@ function wc_loyalty_save_meta( $order_id ) {
  * Create coupon on order status change
  */
 function wc_loyalty_create_coupon( $order_id ) {
-	error_log( "WC Loyalty Coupon: Creating coupon for order $order_id" );
+	error_log( "WC Loyalty Coupon: *** CREATE_COUPON HOOK TRIGGERED for order $order_id ***" );
 
 	try {
 		// Check if already processed
-		if ( get_post_meta( $order_id, '_wc_loyalty_processed', true ) ) {
+		$processed = get_post_meta( $order_id, '_wc_loyalty_processed', true );
+		error_log( "WC Loyalty Coupon: Order $order_id - Already processed? " . ( $processed ? 'YES' : 'NO' ) );
+
+		if ( $processed ) {
 			error_log( "WC Loyalty Coupon: Order $order_id already processed" );
 			return;
 		}
@@ -198,13 +212,18 @@ function wc_loyalty_create_coupon( $order_id ) {
 
 		// Get the choice that was saved
 		$choice = get_post_meta( $order_id, '_wc_loyalty_choice', true );
-		error_log( "WC Loyalty Coupon: Order $order_id choice: $choice" );
+		error_log( "WC Loyalty Coupon: Order $order_id - Retrieved choice from meta: '" . ( $choice ? $choice : 'EMPTY' ) . "'" );
+
+		if ( empty( $choice ) ) {
+			error_log( "WC Loyalty Coupon: Order $order_id - NO CHOICE SAVED! Skipping coupon creation." );
+			return;
+		}
 
 		// Check if qualifies
 		$total = floatval( $order->get_total() );
 		$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
 
-		error_log( "WC Loyalty Coupon: Order $order_id total: $total, min: $min" );
+		error_log( "WC Loyalty Coupon: Order $order_id total: $total, min: $min, qualifies: " . ( $total >= $min ? 'YES' : 'NO' ) );
 
 		if ( $total < $min ) {
 			error_log( "WC Loyalty Coupon: Order $order_id doesn't qualify (total < min)" );
@@ -235,14 +254,16 @@ function wc_loyalty_create_coupon( $order_id ) {
 		// Get recipient
 		if ( 'gift' === $choice ) {
 			$recipient = get_post_meta( $order_id, '_wc_loyalty_friend_email', true );
+			error_log( "WC Loyalty Coupon: Order $order_id is GIFT - Retrieved friend email: '" . ( $recipient ? $recipient : 'EMPTY' ) . "'" );
 		} else {
 			$recipient = $order->get_billing_email();
+			error_log( "WC Loyalty Coupon: Order $order_id is PERSONAL - Retrieved billing email: '" . ( $recipient ? $recipient : 'EMPTY' ) . "'" );
 		}
 
-		error_log( "WC Loyalty Coupon: Recipient for order $order_id: $recipient" );
+		error_log( "WC Loyalty Coupon: Final recipient for order $order_id: " . ( $recipient ? $recipient : 'NO RECIPIENT' ) );
 
 		if ( ! $recipient ) {
-			error_log( "WC Loyalty Coupon: No recipient found for order $order_id" );
+			error_log( "WC Loyalty Coupon: ✗ CRITICAL: No recipient found for order $order_id - ABORTING coupon creation" );
 			return;
 		}
 
@@ -251,13 +272,14 @@ function wc_loyalty_create_coupon( $order_id ) {
 		$coupon->set_date_expires( strtotime( "+$days days" ) );
 
 		// Save coupon
+		error_log( "WC Loyalty Coupon: About to save coupon. Code: $code, Amount: $amount, Recipient: $recipient" );
 		$coupon_id = $coupon->save();
 		if ( ! $coupon_id ) {
-			error_log( "WC Loyalty Coupon: Failed to save coupon for order $order_id" );
+			error_log( "WC Loyalty Coupon: ✗ FAILED to save coupon for order $order_id" );
 			return;
 		}
 
-		error_log( "WC Loyalty Coupon: Coupon created! ID: $coupon_id, Code: $code" );
+		error_log( "WC Loyalty Coupon: ✓ Coupon created! ID: $coupon_id, Code: $code, Amount: $amount" );
 
 		// Mark as processed
 		update_post_meta( $order_id, '_wc_loyalty_processed', '1' );
