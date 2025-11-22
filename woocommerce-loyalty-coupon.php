@@ -53,6 +53,7 @@ function wc_loyalty_init() {
 	add_action( 'woocommerce_before_checkout_form', 'wc_loyalty_checkout_form' );
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
 	add_action( 'woocommerce_checkout_update_order_meta', 'wc_loyalty_save_meta' );
+	add_action( 'woocommerce_before_cart', 'wc_loyalty_cart_banner' );
 
 	error_log( 'WC Loyalty Coupon: Plugin initialized successfully' );
 }
@@ -82,7 +83,31 @@ function wc_loyalty_qualifies() {
 }
 
 /**
- * Render checkout form
+ * Display banner on cart page
+ */
+function wc_loyalty_cart_banner() {
+	error_log( "WC Loyalty Coupon: *** CART_BANNER called - Checking if customer qualifies ***" );
+	if ( ! wc_loyalty_qualifies() ) {
+		error_log( "WC Loyalty Coupon: Customer does NOT qualify on cart - hiding banner" );
+		return;
+	}
+
+	error_log( "WC Loyalty Coupon: ✓ Customer QUALIFIES on cart - showing banner" );
+
+	$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
+	?>
+	<!-- WC Loyalty Coupon Cart Banner -->
+	<div style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15); text-align: center;">
+		<div style="max-width: 800px; margin: 0 auto;">
+			<h2 style="margin: 0 0 10px 0; font-size: 28px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h2>
+			<p style="margin: 0; font-size: 16px; opacity: 0.95;">Complete your purchase to claim your reward. You can keep it for yourself or send it to a friend!</p>
+		</div>
+	</div>
+	<?php
+}
+
+/**
+ * Render checkout form with banner
  */
 function wc_loyalty_checkout_form() {
 	error_log( "WC Loyalty Coupon: *** CHECKOUT_FORM called - Checking if customer qualifies ***" );
@@ -99,34 +124,68 @@ function wc_loyalty_checkout_form() {
 
 	error_log( "WC Loyalty Coupon: Form rendering - Choice: $choice, Email: " . ( $email ? $email : 'NONE' ) );
 	?>
-	<div style="background:#f5f5f5;padding:20px;margin:20px 0;border-left:4px solid #0073aa;border-radius:4px;">
-		<h3>You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h3>
-		<p>What would you like to do with it?</p>
+	<!-- WC Loyalty Coupon Banner -->
+	<div style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0 30px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15);">
+		<div style="max-width: 1200px; margin: 0 auto;">
+			<h2 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h2>
+			<p style="margin: 0; font-size: 15px; opacity: 0.95;">Thanks for being a valued customer! Choose what to do with your reward below.</p>
+		</div>
+	</div>
 
-		<label style="display:block;margin:10px 0;">
-			<input type="radio" name="wc_loyalty_choice" value="keep" <?php checked( $choice, 'keep' ); ?> />
-			Keep it for my next purchase
-		</label>
+	<!-- WC Loyalty Coupon Form -->
+	<div style="background:#f9f9f9;padding:25px;margin:0 0 30px 0;border: 2px solid #e0e0e0;border-radius:8px;">
+		<h3 style="margin-top: 0; color: #333; font-size: 18px;">What would you like to do with your coupon?</h3>
 
-		<label style="display:block;margin:10px 0;">
-			<input type="radio" name="wc_loyalty_choice" value="gift" <?php checked( $choice, 'gift' ); ?> />
-			Send it to a friend
-		</label>
+		<div style="display: flex; gap: 30px; margin-bottom: 20px;">
+			<label style="display:flex; align-items: center; cursor: pointer; flex: 1; padding: 15px; background: white; border: 2px solid #ddd; border-radius: 6px; transition: all 0.3s ease;" class="loyalty-choice-keep">
+				<input type="radio" name="wc_loyalty_choice" value="keep" <?php checked( $choice, 'keep' ); ?> style="margin-right: 12px; cursor: pointer; width: 20px; height: 20px;" />
+				<span style="font-weight: 600; color: #333;">Keep it for my next purchase</span>
+			</label>
 
-		<div id="friend_email_div" style="display:<?php echo $choice === 'gift' ? 'block' : 'none'; ?>;margin:15px 0;">
-			<label>Friend's Email:</label>
-			<input type="email" name="wc_loyalty_email" placeholder="friend@example.com" value="<?php echo esc_attr( $email ); ?>" style="width:100%;padding:8px;box-sizing:border-box;" />
+			<label style="display:flex; align-items: center; cursor: pointer; flex: 1; padding: 15px; background: white; border: 2px solid #ddd; border-radius: 6px; transition: all 0.3s ease;" class="loyalty-choice-gift">
+				<input type="radio" name="wc_loyalty_choice" value="gift" <?php checked( $choice, 'gift' ); ?> style="margin-right: 12px; cursor: pointer; width: 20px; height: 20px;" />
+				<span style="font-weight: 600; color: #333;">Send it to a friend</span>
+			</label>
 		</div>
 
-		<script>
-		document.addEventListener('change', function(e) {
-			if ( e.target.name === 'wc_loyalty_choice' ) {
-				var div = document.getElementById('friend_email_div');
-				div.style.display = e.target.value === 'gift' ? 'block' : 'none';
-			}
-		});
-		</script>
+		<div id="friend_email_div" style="display:<?php echo $choice === 'gift' ? 'block' : 'none'; ?>; margin: 20px 0; padding: 20px; background: white; border: 2px solid #0073aa; border-radius: 6px;">
+			<label style="display: block; margin-bottom: 8px; font-weight: 600; color: #333;">Friend's Email Address:</label>
+			<input type="email" name="wc_loyalty_email" placeholder="friend@example.com" value="<?php echo esc_attr( $email ); ?>" style="width:100%;padding:12px;box-sizing:border-box;border: 1px solid #ddd; border-radius: 4px; font-size: 14px;" />
+			<small style="display: block; margin-top: 8px; color: #666;">We'll send them an email with their coupon code</small>
+		</div>
 	</div>
+
+	<script>
+	document.addEventListener('DOMContentLoaded', function() {
+		const keepLabel = document.querySelector('.loyalty-choice-keep');
+		const giftLabel = document.querySelector('.loyalty-choice-gift');
+		const friendDiv = document.getElementById('friend_email_div');
+		const radioButtons = document.querySelectorAll('input[name="wc_loyalty_choice"]');
+
+		function updateUI() {
+			const choice = document.querySelector('input[name="wc_loyalty_choice"]:checked').value;
+			friendDiv.style.display = choice === 'gift' ? 'block' : 'none';
+
+			if (choice === 'keep') {
+				keepLabel.style.borderColor = '#0073aa';
+				keepLabel.style.backgroundColor = '#f0f7ff';
+				giftLabel.style.borderColor = '#ddd';
+				giftLabel.style.backgroundColor = 'white';
+			} else {
+				giftLabel.style.borderColor = '#0073aa';
+				giftLabel.style.backgroundColor = '#f0f7ff';
+				keepLabel.style.borderColor = '#ddd';
+				keepLabel.style.backgroundColor = 'white';
+			}
+		}
+
+		radioButtons.forEach(radio => {
+			radio.addEventListener('change', updateUI);
+		});
+
+		updateUI();
+	});
+	</script>
 	<?php
 }
 
