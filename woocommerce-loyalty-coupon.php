@@ -388,11 +388,34 @@ function wc_loyalty_create_coupon( $order_id ) {
 		$message .= '<p>Best regards,<br>' . esc_html( $blogname ) . '</p>';
 		$message .= '</body></html>';
 
-		// Send via WooCommerce email system
-		if ( class_exists( 'WC_Email' ) ) {
-			error_log( "WC Loyalty Coupon: Attempting to send email to $recipient for order $order_id via WooCommerce" );
+		// Send via WooCommerce's mailer system
+		if ( function_exists( 'WC' ) && WC()->mailer() ) {
+			error_log( "WC Loyalty Coupon: Attempting to send email to $recipient for order $order_id via WooCommerce mailer" );
 
-			// Get admin email for From header
+			// Get admin email for proper From header
+			$admin_email = get_option( 'admin_email' );
+			$from_name = get_option( 'blogname' );
+
+			// Prepare headers the WooCommerce way
+			$headers = array(
+				'Content-Type: text/html; charset=UTF-8',
+				'From: ' . $from_name . ' <' . $admin_email . '>',
+				'Reply-To: ' . $admin_email
+			);
+
+			// Use WooCommerce's mailer to send
+			$mailer = WC()->mailer();
+			$sent = $mailer->send( $recipient, $subject, $message, $headers );
+
+			if ( $sent ) {
+				error_log( "WC Loyalty Coupon: ✓ Email sent successfully to $recipient for order $order_id via WooCommerce mailer" );
+			} else {
+				error_log( "WC Loyalty Coupon: ✗ Email FAILED to send to $recipient for order $order_id. Check WooCommerce email settings." );
+			}
+		} else {
+			error_log( "WC Loyalty Coupon: ✗ WooCommerce mailer not available - falling back to wp_mail" );
+
+			// Fallback to wp_mail if mailer not available
 			$admin_email = get_option( 'admin_email' );
 			$headers = array(
 				'Content-Type: text/html; charset=UTF-8',
@@ -402,12 +425,10 @@ function wc_loyalty_create_coupon( $order_id ) {
 			$sent = wp_mail( $recipient, $subject, $message, $headers );
 
 			if ( $sent ) {
-				error_log( "WC Loyalty Coupon: ✓ Email sent successfully to $recipient for order $order_id" );
+				error_log( "WC Loyalty Coupon: ✓ Email sent via wp_mail fallback to $recipient for order $order_id" );
 			} else {
-				error_log( "WC Loyalty Coupon: ✗ Email FAILED to send to $recipient for order $order_id. Check your site's email configuration." );
+				error_log( "WC Loyalty Coupon: ✗ Email FAILED via wp_mail for $recipient for order $order_id" );
 			}
-		} else {
-			error_log( "WC Loyalty Coupon: WooCommerce email system not available" );
 		}
 
 	} catch ( Exception $e ) {
