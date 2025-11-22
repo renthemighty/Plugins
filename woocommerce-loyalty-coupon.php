@@ -53,6 +53,11 @@ function wc_loyalty_init() {
 	add_action( 'woocommerce_order_status_completed', 'wc_loyalty_create_coupon', 10, 1 );
 
 	error_log( 'WC Loyalty Coupon: Loaded on frontend' );
+
+	// Add metabox to order page
+	if ( is_admin() ) {
+		add_action( 'add_meta_boxes', 'wc_loyalty_add_order_metabox' );
+	}
 }
 
 /**
@@ -258,17 +263,43 @@ function wc_loyalty_create_coupon( $order_id ) {
 		update_post_meta( $order_id, '_wc_loyalty_processed', '1' );
 		update_post_meta( $coupon_id, '_wc_loyalty_order_id', $order_id );
 
-		// Send email
+		// Send email with proper headers
 		$subject = 'Your $' . number_format( $amount, 2 ) . ' Coupon';
-		$message = "You've received a coupon!\n\n";
-		$message .= "Code: $code\n";
-		$message .= "Discount: $" . number_format( $amount, 2 ) . "\n";
-		$message .= "Expires: " . date( 'Y-m-d', strtotime( "+$days days" ) ) . "\n\n";
-		$message .= "Use it at checkout!";
+
+		// Build HTML message
+		$blogname = get_option( 'blogname' );
+		$message = '<html><body>';
+		$message .= '<h2>You\'ve Received a Coupon!</h2>';
+		$message .= '<p>Hi,</p>';
+		$message .= '<p>You\'ve been given a <strong>$' . number_format( $amount, 2 ) . ' discount coupon</strong> from ' . esc_html( $blogname ) . '!</p>';
+		$message .= '<h3 style="color: #0073aa;">Your Coupon Code</h3>';
+		$message .= '<div style="background: #f5f5f5; padding: 15px; border-left: 4px solid #0073aa; border-radius: 4px;">';
+		$message .= '<p style="font-size: 18px; font-weight: bold; color: #0073aa; letter-spacing: 2px;">' . esc_html( $code ) . '</p>';
+		$message .= '</div>';
+		$message .= '<h3>Coupon Details</h3>';
+		$message .= '<ul>';
+		$message .= '<li><strong>Discount:</strong> $' . number_format( $amount, 2 ) . '</li>';
+		$message .= '<li><strong>Valid Until:</strong> ' . date( 'Y-m-d', strtotime( "+$days days" ) ) . '</li>';
+		$message .= '<li><strong>Usage:</strong> Once per customer</li>';
+		$message .= '</ul>';
+		$message .= '<p>Use this coupon code at checkout on your next purchase!</p>';
+		$message .= '<p>Best regards,<br>' . esc_html( $blogname ) . '</p>';
+		$message .= '</body></html>';
 
 		if ( function_exists( 'wp_mail' ) ) {
-			$sent = wp_mail( $recipient, $subject, $message );
-			error_log( "WC Loyalty Coupon: Email sent to $recipient for order $order_id: " . ( $sent ? 'success' : 'failed' ) );
+			$headers = array( 'Content-Type: text/html; charset=UTF-8' );
+
+			error_log( "WC Loyalty Coupon: Attempting to send email to $recipient for order $order_id" );
+			error_log( "WC Loyalty Coupon: Subject: $subject" );
+			error_log( "WC Loyalty Coupon: Headers: " . implode( ', ', $headers ) );
+
+			$sent = wp_mail( $recipient, $subject, $message, $headers );
+
+			if ( $sent ) {
+				error_log( "WC Loyalty Coupon: ✓ Email sent successfully to $recipient for order $order_id" );
+			} else {
+				error_log( "WC Loyalty Coupon: ✗ Email FAILED to send to $recipient for order $order_id. Check your server's email configuration." );
+			}
 		} else {
 			error_log( "WC Loyalty Coupon: wp_mail function not available" );
 		}
@@ -276,6 +307,108 @@ function wc_loyalty_create_coupon( $order_id ) {
 	} catch ( Exception $e ) {
 		error_log( 'WC Loyalty Coupon Error: ' . $e->getMessage() );
 	}
+}
+
+/**
+ * Add metabox to order page
+ */
+function wc_loyalty_add_order_metabox() {
+	add_meta_box(
+		'wc_loyalty_coupon_info',
+		'Loyalty Coupon',
+		'wc_loyalty_order_metabox_content',
+		'shop_order',
+		'normal',
+		'high'
+	);
+}
+
+/**
+ * Display metabox content on order page
+ */
+function wc_loyalty_order_metabox_content( $post ) {
+	$order_id = $post->ID;
+
+	// Check if processed
+	$processed = get_post_meta( $order_id, '_wc_loyalty_processed', true );
+	if ( ! $processed ) {
+		echo '<p style="color: #999;">No loyalty coupon created for this order.</p>';
+		return;
+	}
+
+	// Get choice
+	$choice = get_post_meta( $order_id, '_wc_loyalty_choice', true );
+	$friend_email = get_post_meta( $order_id, '_wc_loyalty_friend_email', true );
+
+	// Get coupon
+	global $wpdb;
+	$coupon_id = $wpdb->get_var( $wpdb->prepare(
+		"SELECT post_id FROM $wpdb->postmeta WHERE meta_key = '_wc_loyalty_order_id' AND meta_value = %d LIMIT 1",
+		$order_id
+	) );
+
+	if ( ! $coupon_id ) {
+		echo '<p style="color: #999;">Coupon not found.</p>';
+		return;
+	}
+
+	$coupon = new WC_Coupon( $coupon_id );
+	$code = $coupon->get_code();
+	$amount = $coupon->get_amount();
+	$expires = $coupon->get_date_expires() ? $coupon->get_date_expires()->format( 'Y-m-d' ) : 'Never';
+	$used = $coupon->get_usage_count() > 0;
+
+	?>
+	<div style="background: #f9f9f9; padding: 15px; border-left: 4px solid #0073aa; border-radius: 4px;">
+		<table style="width: 100%;">
+			<tr>
+				<td style="width: 30%; font-weight: bold;">Coupon Code:</td>
+				<td><code style="background: #fff; padding: 5px 10px; border: 1px solid #ddd; border-radius: 3px;"><?php echo esc_html( $code ); ?></code></td>
+			</tr>
+			<tr>
+				<td style="width: 30%; font-weight: bold;">Amount:</td>
+				<td>$<?php echo number_format( $amount, 2 ); ?></td>
+			</tr>
+			<tr>
+				<td style="width: 30%; font-weight: bold;">Type:</td>
+				<td>
+					<?php if ( 'gift' === $choice ) : ?>
+						<span style="background: #2271b1; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px;">🎁 Gift</span>
+					<?php else : ?>
+						<span style="background: #117722; color: white; padding: 3px 8px; border-radius: 3px; font-size: 12px;">Personal</span>
+					<?php endif; ?>
+				</td>
+			</tr>
+			<tr>
+				<td style="width: 30%; font-weight: bold;">Recipient:</td>
+				<td>
+					<?php
+					if ( 'gift' === $choice ) {
+						echo esc_html( $friend_email );
+					} else {
+						$order = wc_get_order( $order_id );
+						echo esc_html( $order->get_billing_email() );
+					}
+					?>
+				</td>
+			</tr>
+			<tr>
+				<td style="width: 30%; font-weight: bold;">Expires:</td>
+				<td><?php echo esc_html( $expires ); ?></td>
+			</tr>
+			<tr>
+				<td style="width: 30%; font-weight: bold;">Status:</td>
+				<td>
+					<?php if ( $used ) : ?>
+						<span style="color: green; font-weight: bold;">✓ Used</span>
+					<?php else : ?>
+						<span style="color: orange; font-weight: bold;">⏱ Unused</span>
+					<?php endif; ?>
+				</td>
+			</tr>
+		</table>
+	</div>
+	<?php
 }
 
 /**
