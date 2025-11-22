@@ -312,27 +312,127 @@ function wc_loyalty_admin_page() {
 	if ( ! current_user_can( 'manage_woocommerce' ) ) {
 		wp_die( 'Unauthorized' );
 	}
+
+	$tab = isset( $_GET['tab'] ) ? sanitize_text_field( $_GET['tab'] ) : 'coupons';
 	?>
 	<div class="wrap">
-		<h1>Loyalty Coupons Settings</h1>
-		<form method="post" action="options.php">
-			<?php settings_fields( 'wc_loyalty_coupon_group' ); ?>
-			<table class="form-table">
+		<h1>Loyalty Coupons</h1>
+
+		<nav class="nav-tab-wrapper">
+			<a href="?page=wc-loyalty-coupon&tab=coupons" class="nav-tab <?php echo $tab === 'coupons' ? 'nav-tab-active' : ''; ?>">Coupons Created</a>
+			<a href="?page=wc-loyalty-coupon&tab=settings" class="nav-tab <?php echo $tab === 'settings' ? 'nav-tab-active' : ''; ?>">Settings</a>
+		</nav>
+
+		<div style="background: #fff; padding: 20px; border: 1px solid #ccc; margin-top: 20px;">
+			<?php if ( $tab === 'settings' ) : ?>
+				<h2>Settings</h2>
+				<form method="post" action="options.php">
+					<?php settings_fields( 'wc_loyalty_coupon_group' ); ?>
+					<table class="form-table">
+						<tr>
+							<th><label for="wc_loyalty_coupon_amount">Coupon Amount ($)</label></th>
+							<td><input type="number" step="0.01" id="wc_loyalty_coupon_amount" name="wc_loyalty_coupon_amount" value="<?php echo esc_attr( get_option( 'wc_loyalty_coupon_amount', 35 ) ); ?>" /></td>
+						</tr>
+						<tr>
+							<th><label for="wc_loyalty_coupon_min_amount">Minimum Order Amount ($)</label></th>
+							<td><input type="number" step="0.01" id="wc_loyalty_coupon_min_amount" name="wc_loyalty_coupon_min_amount" value="<?php echo esc_attr( get_option( 'wc_loyalty_coupon_min_amount', 250 ) ); ?>" /></td>
+						</tr>
+						<tr>
+							<th><label for="wc_loyalty_coupon_days_valid">Coupon Valid (Days)</label></th>
+							<td><input type="number" id="wc_loyalty_coupon_days_valid" name="wc_loyalty_coupon_days_valid" value="<?php echo esc_attr( get_option( 'wc_loyalty_coupon_days_valid', 30 ) ); ?>" min="1" /></td>
+						</tr>
+					</table>
+					<?php submit_button(); ?>
+				</form>
+			<?php else : ?>
+				<h2>Loyalty Coupons Created</h2>
+				<?php wc_loyalty_show_coupons_table(); ?>
+			<?php endif; ?>
+		</div>
+	</div>
+	<?php
+}
+
+/**
+ * Show table of created coupons
+ */
+function wc_loyalty_show_coupons_table() {
+	global $wpdb;
+
+	// Get all loyalty coupons
+	$results = $wpdb->get_results( "
+		SELECT p.ID, p.post_title, pm.meta_value as order_id
+		FROM {$wpdb->posts} p
+		JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id
+		WHERE p.post_type = 'shop_coupon'
+		AND pm.meta_key = '_wc_loyalty_order_id'
+		ORDER BY p.ID DESC
+	" );
+
+	if ( empty( $results ) ) {
+		echo '<p>No loyalty coupons created yet.</p>';
+		return;
+	}
+
+	?>
+	<table class="wp-list-table widefat">
+		<thead>
+			<tr>
+				<th style="width: 15%;">Coupon Code</th>
+				<th style="width: 10%;">Amount</th>
+				<th style="width: 15%;">Recipient Email</th>
+				<th style="width: 10%;">Order ID</th>
+				<th style="width: 12%;">Created</th>
+				<th style="width: 12%;">Expires</th>
+				<th style="width: 10%;">Status</th>
+				<th style="width: 10%;">Type</th>
+			</tr>
+		</thead>
+		<tbody>
+			<?php foreach ( $results as $row ) :
+				$coupon = new WC_Coupon( $row->ID );
+				$order = wc_get_order( $row->order_id );
+				$order_id = $row->order_id;
+
+				// Get recipient info
+				$gift_choice = get_post_meta( $order_id, '_wc_loyalty_choice', true );
+				if ( 'gift' === $gift_choice ) {
+					$recipient = get_post_meta( $order_id, '_wc_loyalty_friend_email', true );
+					$type = 'Gift';
+				} else {
+					$recipient = $order ? $order->get_billing_email() : 'N/A';
+					$type = 'Personal';
+				}
+
+				$amount = $coupon->get_amount();
+				$used = $coupon->get_usage_count() > 0;
+				$expires = $coupon->get_date_expires() ? $coupon->get_date_expires()->format( 'Y-m-d' ) : 'Never';
+				$created = get_the_time( 'Y-m-d H:i', $row->ID );
+				?>
 				<tr>
-					<th><label for="wc_loyalty_coupon_amount">Coupon Amount ($)</label></th>
-					<td><input type="number" step="0.01" id="wc_loyalty_coupon_amount" name="wc_loyalty_coupon_amount" value="<?php echo esc_attr( get_option( 'wc_loyalty_coupon_amount', 35 ) ); ?>" /></td>
+					<td><strong><?php echo esc_html( $coupon->get_code() ); ?></strong></td>
+					<td>$<?php echo number_format( $amount, 2 ); ?></td>
+					<td><?php echo esc_html( $recipient ); ?></td>
+					<td><a href="<?php echo admin_url( 'post.php?post=' . $order_id . '&action=edit' ); ?>"><?php echo $order_id; ?></a></td>
+					<td><?php echo $created; ?></td>
+					<td><?php echo $expires; ?></td>
+					<td>
+						<?php if ( $used ) : ?>
+							<span style="color: green; font-weight: bold;">✓ Used</span>
+						<?php else : ?>
+							<span style="color: orange; font-weight: bold;">⏱ Unused</span>
+						<?php endif; ?>
+					</td>
+					<td><?php echo $type; ?></td>
 				</tr>
-				<tr>
-					<th><label for="wc_loyalty_coupon_min_amount">Minimum Order Amount ($)</label></th>
-					<td><input type="number" step="0.01" id="wc_loyalty_coupon_min_amount" name="wc_loyalty_coupon_min_amount" value="<?php echo esc_attr( get_option( 'wc_loyalty_coupon_min_amount', 250 ) ); ?>" /></td>
-				</tr>
-				<tr>
-					<th><label for="wc_loyalty_coupon_days_valid">Coupon Valid (Days)</label></th>
-					<td><input type="number" id="wc_loyalty_coupon_days_valid" name="wc_loyalty_coupon_days_valid" value="<?php echo esc_attr( get_option( 'wc_loyalty_coupon_days_valid', 30 ) ); ?>" min="1" /></td>
-				</tr>
-			</table>
-			<?php submit_button(); ?>
-		</form>
+			<?php endforeach; ?>
+		</tbody>
+	</table>
+
+	<div style="margin-top: 20px; padding: 10px; background: #f5f5f5; border-left: 4px solid #0073aa;">
+		<p><strong>Total Coupons:</strong> <?php echo count( $results ); ?></p>
+		<p><strong>Used:</strong> <?php echo count( array_filter( $results, function( $r ) { $c = new WC_Coupon( $r->ID ); return $c->get_usage_count() > 0; } ) ); ?></p>
+		<p><strong>Unused:</strong> <?php echo count( array_filter( $results, function( $r ) { $c = new WC_Coupon( $r->ID ); return $c->get_usage_count() === 0; } ) ); ?></p>
 	</div>
 	<?php
 }
