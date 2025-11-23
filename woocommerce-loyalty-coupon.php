@@ -268,13 +268,24 @@ function wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order
 	// Build HTML message matching the professional template design
 	$expiration_date = date( 'F j, Y', strtotime( "+$days days" ) );
 
+	// Get logo URL
+	$logo_url = apply_filters( 'wc_loyalty_email_logo_url', '' );
+
 	$message = '<html>
 <body style="background:#fff">
 	<div style="max-width:560px;padding:20px;background:#ffffff;border-radius:5px;margin:40px auto;font-family:Open Sans,Helvetica,Arial;font-size:15px;color:#666">
 
 		<!-- Header -->
 		<div style="color:#444444;font-weight:normal">
-			<div style="text-align:center;font-weight:600;font-size:26px;padding:10px 0;border-bottom:solid 3px #eeeeee">' . esc_html( $blogname ) . '</div>
+			<div style="text-align:center;padding:10px 0;border-bottom:solid 3px #eeeeee;margin-bottom:0">';
+
+			if ( $logo_url ) {
+				$message .= '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( $blogname ) . '" style="max-width:200px;height:auto;display:block;margin:0 auto 10px auto">';
+			} else {
+				$message .= '<div style="font-weight:600;font-size:26px">' . esc_html( $blogname ) . '</div>';
+			}
+
+			$message .= '</div>
 			<div style="clear:both"></div>
 		</div>
 
