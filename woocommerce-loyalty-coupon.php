@@ -55,6 +55,11 @@ function wc_loyalty_init() {
 	add_action( 'woocommerce_checkout_process', 'wc_loyalty_validate_checkout' );
 	add_action( 'woocommerce_thankyou', 'wc_loyalty_save_meta_from_thankyou', 10, 1 );
 	add_action( 'woocommerce_before_cart', 'wc_loyalty_cart_banner' );
+	add_action( 'wp_enqueue_scripts', 'wc_loyalty_enqueue_scripts' );
+
+	// AJAX endpoints
+	add_action( 'wp_ajax_wc_loyalty_check_qualification', 'wc_loyalty_ajax_check_qualification' );
+	add_action( 'wp_ajax_nopriv_wc_loyalty_check_qualification', 'wc_loyalty_ajax_check_qualification' );
 
 	error_log( 'WC Loyalty Coupon: Plugin initialized successfully' );
 }
@@ -84,6 +89,57 @@ function wc_loyalty_qualifies() {
 }
 
 /**
+ * AJAX endpoint to check qualification
+ */
+function wc_loyalty_ajax_check_qualification() {
+	if ( ! wc_loyalty_qualifies() ) {
+		wp_send_json( array( 'qualifies' => false ) );
+	}
+
+	$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
+	wp_send_json( array( 'qualifies' => true, 'amount' => $amount ) );
+}
+
+/**
+ * Enqueue JavaScript for dynamic cart updates
+ */
+function wc_loyalty_enqueue_scripts() {
+	if ( is_cart() || is_checkout() ) {
+		wp_enqueue_script( 'wc-loyalty-dynamic', false, array( 'jquery' ), '1.0', true );
+		wp_add_inline_script( 'wc-loyalty-dynamic', "
+(function($) {
+	var checkQualification = function() {
+		$.ajax({
+			url: '" . admin_url( 'admin-ajax.php' ) . "',
+			type: 'POST',
+			data: {
+				action: 'wc_loyalty_check_qualification'
+			},
+			success: function(response) {
+				if (response.qualifies) {
+					$('.wc-loyalty-banner').show();
+					$('.wc-loyalty-form').show();
+				} else {
+					$('.wc-loyalty-banner').hide();
+					$('.wc-loyalty-form').hide();
+				}
+			}
+		});
+	};
+
+	// Check on page load
+	checkQualification();
+
+	// Check when cart is updated
+	$(document).on('wc_fragments_refreshed updated_wc_div wc_update_cart', function() {
+		setTimeout(checkQualification, 500);
+	});
+})(jQuery);
+		" );
+	}
+}
+
+/**
  * Display banner on cart page
  */
 function wc_loyalty_cart_banner() {
@@ -98,7 +154,7 @@ function wc_loyalty_cart_banner() {
 	$amount = floatval( get_option( 'wc_loyalty_coupon_amount', 35 ) );
 	?>
 	<!-- WC Loyalty Coupon Cart Banner -->
-	<div style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15); text-align: center;">
+	<div class="wc-loyalty-banner" style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15); text-align: center;">
 		<div style="max-width: 800px; margin: 0 auto;">
 			<h2 style="margin: 0 0 10px 0; font-size: 28px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Coupon!</h2>
 			<p style="margin: 0; font-size: 16px; opacity: 0.95;">Complete your purchase to claim your reward. You can keep it for yourself or send it to a friend!</p>
@@ -126,7 +182,7 @@ function wc_loyalty_checkout_form() {
 	error_log( "WC Loyalty Coupon: Form rendering - Choice: $choice, Email: " . ( $email ? $email : 'NONE' ) );
 	?>
 	<!-- WC Loyalty Coupon Banner -->
-	<div style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0 30px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15);">
+	<div class="wc-loyalty-banner" style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0 30px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15);">
 		<div style="max-width: 1200px; margin: 0 auto;">
 			<h2 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Coupon!</h2>
 			<p style="margin: 0; font-size: 15px; opacity: 0.95;">Thanks for being a valued customer! Choose what to do with your reward below.</p>
@@ -134,7 +190,7 @@ function wc_loyalty_checkout_form() {
 	</div>
 
 	<!-- WC Loyalty Coupon Form -->
-	<div style="background:#f9f9f9;padding:25px;margin:0 0 30px 0;border: 2px solid #e0e0e0;border-radius:8px;">
+	<div class="wc-loyalty-form" style="background:#f9f9f9;padding:25px;margin:0 0 30px 0;border: 2px solid #e0e0e0;border-radius:8px;">
 		<h3 style="margin-top: 0; color: #333; font-size: 18px;">What would you like to do with your coupon?</h3>
 
 		<div style="display: flex; gap: 30px; margin-bottom: 20px;">
