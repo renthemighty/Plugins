@@ -100,7 +100,7 @@ function wc_loyalty_cart_banner() {
 	<!-- WC Loyalty Coupon Cart Banner -->
 	<div style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15); text-align: center;">
 		<div style="max-width: 800px; margin: 0 auto;">
-			<h2 style="margin: 0 0 10px 0; font-size: 28px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h2>
+			<h2 style="margin: 0 0 10px 0; font-size: 28px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Coupon!</h2>
 			<p style="margin: 0; font-size: 16px; opacity: 0.95;">Complete your purchase to claim your reward. You can keep it for yourself or send it to a friend!</p>
 		</div>
 	</div>
@@ -128,7 +128,7 @@ function wc_loyalty_checkout_form() {
 	<!-- WC Loyalty Coupon Banner -->
 	<div style="background: linear-gradient(135deg, #0073aa 0%, #005a87 100%); color: white; padding: 30px 20px; margin: 20px 0 30px 0; border-radius: 8px; box-shadow: 0 4px 12px rgba(0, 115, 170, 0.15);">
 		<div style="max-width: 1200px; margin: 0 auto;">
-			<h2 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Loyalty Coupon!</h2>
+			<h2 style="margin: 0 0 10px 0; font-size: 26px; font-weight: 700; color: #fff;">🎁 You've Earned a $<?php echo number_format( $amount, 2 ); ?> Coupon!</h2>
 			<p style="margin: 0; font-size: 15px; opacity: 0.95;">Thanks for being a valued customer! Choose what to do with your reward below.</p>
 		</div>
 	</div>
