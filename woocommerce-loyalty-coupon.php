@@ -265,38 +265,61 @@ function wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order
 	$blogname = get_option( 'blogname' );
 	$subject = 'You just got $' . number_format( $amount, 2 ) . ' off from ' . esc_html( $customer_first_name );
 
-	// Build HTML message - left-aligned with new brand color
-	$message = '<html><body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333; text-align: left;">';
-	$message .= '<div style="max-width: 600px; margin: 0 auto; padding-top: 35px;">';
+	// Build HTML message matching the professional template design
+	$expiration_date = date( 'F j, Y', strtotime( "+$days days" ) );
 
-	// Logo placeholder (customizable via filter)
-	$logo_url = apply_filters( 'wc_loyalty_email_logo_url', '' );
-	if ( $logo_url ) {
-		$message .= '<div style="margin-bottom: 20px;">';
-		$message .= '<img src="' . esc_url( $logo_url ) . '" alt="' . esc_attr( $blogname ) . '" style="max-width: 200px; height: auto;">';
-		$message .= '</div>';
-	}
+	$message = '<html>
+<body style="background:#fff">
+	<div style="max-width:560px;padding:20px;background:#ffffff;border-radius:5px;margin:40px auto;font-family:Open Sans,Helvetica,Arial;font-size:15px;color:#666">
 
-	$message .= '<h2 style="color: #153ca3; margin-bottom: 10px;">You\'ve Received a Coupon!</h2>';
-	$message .= '<p>Thanks for being a valued customer!</p>';
+		<!-- Header -->
+		<div style="color:#444444;font-weight:normal">
+			<div style="text-align:center;font-weight:600;font-size:26px;padding:10px 0;border-bottom:solid 3px #eeeeee">' . esc_html( $blogname ) . '</div>
+			<div style="clear:both"></div>
+		</div>
 
-	$message .= '<p>Hi,</p>';
-	$message .= '<p>You\'ve been given a <strong>$' . number_format( $amount, 2 ) . ' discount coupon</strong> from ' . esc_html( $customer_first_name ) . ' and ' . esc_html( $blogname ) . '!</p>';
+		<!-- Main Content -->
+		<div style="padding:0 30px 30px 30px;border-bottom:3px solid #eeeeee">
 
-	$message .= '<h3 style="color: #153ca3;">Your Coupon Code</h3>';
-	$message .= '<p style="font-size: 18px; font-weight: bold; color: #153ca3; letter-spacing: 2px;">' . esc_html( $code ) . '</p>';
+			<!-- Main Message -->
+			<div style="padding:30px 0;font-size:24px;text-align:center;line-height:40px;color:#444">You\'ve Received a $' . number_format( $amount, 2 ) . ' Coupon!</div>
 
-	$message .= '<h3 style="color: #333;">Coupon Details</h3>';
-	$message .= '<ul style="padding-left: 20px;">';
-	$message .= '<li><strong>Discount:</strong> $' . number_format( $amount, 2 ) . '</li>';
-	$message .= '<li><strong>Valid Until:</strong> ' . date( 'Y-m-d', strtotime( "+$days days" ) ) . '</li>';
-	$message .= '<li><strong>Usage:</strong> Once per customer</li>';
-	$message .= '</ul>';
+			<!-- Subtext -->
+			<div style="padding:10px 0 30px 0;text-align:center;color:#666;font-size:15px">From ' . esc_html( $customer_first_name ) . ' and ' . esc_html( $blogname ) . '</div>
 
-	$message .= '<p>Use this coupon code at checkout on your next purchase!</p>';
-	$message .= '<p>Best regards,<br><strong>' . esc_html( $blogname ) . '</strong></p>';
-	$message .= '</div>';
-	$message .= '</body></html>';
+			<!-- Coupon Code Box -->
+			<div style="padding:20px 0 30px 0;text-align:center">
+				<div style="background:#f5f5f5;color:#444;padding:20px 15px;border-radius:3px;border-left:4px solid #153ca3">
+					<div style="font-size:14px;color:#999;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px">Your Coupon Code</div>
+					<div style="font-size:32px;font-weight:bold;color:#153ca3;letter-spacing:3px;font-family:monospace">' . esc_html( $code ) . '</div>
+				</div>
+			</div>
+
+			<!-- Details Box -->
+			<div style="background:#eee;color:#444;padding:15px;border-radius:3px;font-size:14px;margin:20px 0">
+				<div style="font-weight:bold;font-size:16px;margin-bottom:15px;color:#444">Coupon Details</div>
+				<p style="margin:8px 0;padding:0"><label style="font-weight:bold">Discount:</label> <span>$' . number_format( $amount, 2 ) . '</span></p>
+				<p style="margin:8px 0;padding:0"><label style="font-weight:bold">Valid Until:</label> <span>' . $expiration_date . '</span></p>
+				<p style="margin:8px 0;padding:0"><label style="font-weight:bold">Usage:</label> <span>Once per customer</span></p>
+			</div>
+
+			<!-- CTA -->
+			<div style="padding:20px 0;text-align:center;color:#666;font-size:15px">
+				<p>Use this coupon code at checkout on your next purchase!</p>
+			</div>
+
+		</div>
+
+		<!-- Footer -->
+		<div style="color:#999;padding:20px 30px;font-size:14px">
+			<div>Thank you!</div>
+			<div>The <a href="' . esc_url( home_url() ) . '" style="color:#153ca3;text-decoration:none">' . esc_html( $blogname ) . '</a> Team</div>
+		</div>
+
+	</div>
+</body>
+</html>';
+
 
 	// Send via WooCommerce's mailer system
 	if ( function_exists( 'WC' ) && WC()->mailer() ) {
