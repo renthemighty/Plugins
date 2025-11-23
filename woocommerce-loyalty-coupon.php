@@ -70,11 +70,11 @@ function wc_loyalty_qualifies() {
 			return false;
 		}
 
-		$total = floatval( $wc->cart->get_total( false ) );
+		$total = floatval( $wc->cart->get_subtotal() );
 		$min = floatval( get_option( 'wc_loyalty_coupon_min_amount', 250 ) );
 
 		$qualifies = $total >= $min;
-		error_log( "WC Loyalty Coupon: Cart total: $total, Min: $min, Qualifies: " . ( $qualifies ? 'yes' : 'no' ) );
+		error_log( "WC Loyalty Coupon: Cart subtotal: $total, Min: $min, Qualifies: " . ( $qualifies ? 'yes' : 'no' ) );
 
 		return $qualifies;
 	} catch ( Exception $e ) {
