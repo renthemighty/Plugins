@@ -269,7 +269,7 @@ function wc_loyalty_send_coupon_email( $recipient, $code, $amount, $days, $order
 	$expiration_date = date( 'F j, Y', strtotime( "+$days days" ) );
 
 	// Get logo URL
-	$logo_url = apply_filters( 'wc_loyalty_email_logo_url', '' );
+	$logo_url = 'https://cdn.microgenix.net/wp-content/uploads/2023/02/Microgenix_Asset_Logo2-1.png';
 
 	$message = '<html>
 <body style="background:#fff">
