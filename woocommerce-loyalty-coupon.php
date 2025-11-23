@@ -419,8 +419,12 @@ function wc_loyalty_create_coupon( $order_id ) {
 
 		error_log( "WC Loyalty Coupon: Order $order_id total: $total, min: $min, qualifies: " . ( $total >= $min ? 'YES' : 'NO' ) );
 
-		if ( $total < $min ) {
-			error_log( "WC Loyalty Coupon: Order $order_id doesn't qualify (total < min)" );
+		// Convert to cents (integers) to avoid floating point precision issues
+	$total_cents = round( $total * 100 );
+	$min_cents = round( $min * 100 );
+
+	if ( $total_cents < $min_cents ) {
+			error_log( "WC Loyalty Coupon: Order $order_id doesn't qualify (total: $total_cents cents < min: $min_cents cents)" );
 			return;
 		}
 
