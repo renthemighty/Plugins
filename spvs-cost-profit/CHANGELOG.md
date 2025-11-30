@@ -2,6 +2,19 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.4] - 2024-11-30
+
+### Fixed
+- **Revenue Calculation Accuracy** - Revenue now matches WooCommerce Analytics exactly
+  - Switched from raw SQL queries to WooCommerce's native `wc_get_orders()` API
+  - Using `$order->get_total()` method which matches Analytics calculations
+  - Ensures profit reports show identical revenue figures to WooCommerce reports
+
+### Improved
+- Better WooCommerce compatibility for order data retrieval
+- More reliable profit calculations using official WooCommerce methods
+- Consistent revenue reporting across all admin interfaces
+
 ## [1.4.3] - 2024-11-30
 
 ### Added

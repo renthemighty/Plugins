@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.3
+ * Version: 1.4.4
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -822,70 +822,62 @@ final class SPVS_Cost_Profit {
             $end_date = date( 'Y-m-t' );
         }
 
-        // Query orders with profit data
-        $order_statuses = array_map( 'esc_sql', apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
-        $status_list = "'" . implode( "','", $order_statuses ) . "'";
+        // Use WooCommerce order query for accurate revenue matching Analytics
+        $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) );
 
-        // HPOS compatible query
-        if ( function_exists( 'wc_get_container' ) ) {
-            try {
-                $orders_table = $wpdb->prefix . 'wc_orders';
-                $orders_meta_table = $wpdb->prefix . 'wc_orders_meta';
-
-                // Check if HPOS tables exist
-                $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
-
-                if ( $table_exists ) {
-                    $query = $wpdb->prepare(
-                        "SELECT
-                            DATE_FORMAT(o.date_created_gmt, '%%Y-%%m') as month,
-                            COUNT(DISTINCT o.id) as order_count,
-                            SUM(CAST(om.meta_value AS DECIMAL(10,2))) as total_profit,
-                            SUM(o.total_amount) as total_revenue
-                        FROM {$orders_table} o
-                        LEFT JOIN {$orders_meta_table} om ON o.id = om.order_id AND om.meta_key = %s
-                        WHERE o.status IN ($status_list)
-                        AND o.date_created_gmt >= %s
-                        AND o.date_created_gmt <= %s
-                        GROUP BY month
-                        ORDER BY month ASC",
-                        self::ORDER_TOTAL_PROFIT_META,
-                        $start_date . ' 00:00:00',
-                        $end_date . ' 23:59:59'
-                    );
-
-                    $results = $wpdb->get_results( $query );
-                    if ( $results ) {
-                        return $results;
-                    }
-                }
-            } catch ( Exception $e ) {
-                // Fall through to legacy query
-            }
-        }
-
-        // Legacy post-based orders query
-        $query = $wpdb->prepare(
-            "SELECT
-                DATE_FORMAT(p.post_date, '%%Y-%%m') as month,
-                COUNT(DISTINCT p.ID) as order_count,
-                SUM(CAST(pm.meta_value AS DECIMAL(10,2))) as total_profit,
-                SUM(CAST(pm2.meta_value AS DECIMAL(10,2))) as total_revenue
-            FROM {$wpdb->posts} p
-            LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = %s
-            LEFT JOIN {$wpdb->postmeta} pm2 ON p.ID = pm2.post_id AND pm2.meta_key = '_order_total'
-            WHERE p.post_type = 'shop_order'
-            AND p.post_status IN ($status_list)
-            AND p.post_date >= %s
-            AND p.post_date <= %s
-            GROUP BY month
-            ORDER BY month ASC",
-            self::ORDER_TOTAL_PROFIT_META,
-            $start_date . ' 00:00:00',
-            $end_date . ' 23:59:59'
+        // Get orders using WooCommerce query
+        $args = array(
+            'limit'        => -1,
+            'status'       => $order_statuses,
+            'date_created' => $start_date . '...' . $end_date,
+            'return'       => 'ids',
         );
 
-        return $wpdb->get_results( $query );
+        $order_ids = wc_get_orders( $args );
+
+        // Group orders by month
+        $monthly_data = array();
+
+        foreach ( $order_ids as $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) continue;
+
+            $date = $order->get_date_created();
+            if ( ! $date ) continue;
+
+            $month = $date->format( 'Y-m' );
+
+            if ( ! isset( $monthly_data[ $month ] ) ) {
+                $monthly_data[ $month ] = array(
+                    'month'         => $month,
+                    'order_count'   => 0,
+                    'total_profit'  => 0,
+                    'total_revenue' => 0,
+                );
+            }
+
+            // Get order total (this matches WooCommerce Analytics)
+            // Using get_total() which returns the order total after refunds
+            $revenue = (float) $order->get_total();
+
+            // Get profit from meta
+            $profit = get_post_meta( $order_id, self::ORDER_TOTAL_PROFIT_META, true );
+            $profit = $profit !== '' ? (float) $profit : 0;
+
+            $monthly_data[ $month ]['order_count']++;
+            $monthly_data[ $month ]['total_revenue'] += $revenue;
+            $monthly_data[ $month ]['total_profit'] += $profit;
+        }
+
+        // Convert to objects for consistency
+        $results = array();
+        ksort( $monthly_data );
+
+        foreach ( $monthly_data as $data ) {
+            $results[] = (object) $data;
+        }
+
+        return $results;
     }
 
     public function export_monthly_profit_csv() {
