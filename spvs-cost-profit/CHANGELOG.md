@@ -2,6 +2,12 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.2] - 2024-11-30
+
+### Fixed
+- Currency symbol display in monthly profit reports chart (was showing `&#036;` instead of `$`)
+- Chart Y-axis now properly displays currency symbol without HTML entities
+
 ## [1.4.1] - 2024-11-30
 
 ### 🔒 Data Protection (Critical Update)
