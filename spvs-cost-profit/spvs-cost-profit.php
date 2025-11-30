@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.4
+ * Version: 1.4.5
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -856,9 +856,9 @@ final class SPVS_Cost_Profit {
                 );
             }
 
-            // Get order total (this matches WooCommerce Analytics)
-            // Using get_total() which returns the order total after refunds
-            $revenue = (float) $order->get_total();
+            // Get net sales (this matches WooCommerce Analytics)
+            // Net Sales = Total - Tax - Shipping (same as WooCommerce Analytics "Net Sales")
+            $revenue = (float) $order->get_total() - (float) $order->get_total_tax() - (float) $order->get_shipping_total();
 
             // Get profit from meta
             $profit = get_post_meta( $order_id, self::ORDER_TOTAL_PROFIT_META, true );

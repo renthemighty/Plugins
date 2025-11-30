@@ -2,6 +2,18 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.5] - 2024-11-30
+
+### Fixed
+- **Revenue Calculation - Net Sales** - Now uses exact same calculation as WooCommerce Analytics
+  - Revenue = Order Total - Tax - Shipping (Net Sales)
+  - This matches WooCommerce Analytics "Net Sales" metric precisely
+  - Previously included tax and shipping which inflated numbers significantly
+
+### Technical
+- Changed revenue calculation from `$order->get_total()` to `$order->get_total() - $order->get_total_tax() - $order->get_shipping_total()`
+- Aligns with WooCommerce's OrdersStatsDataStore net_total calculation
+
 ## [1.4.4] - 2024-11-30
 
 ### Fixed
