@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.2
+ * Version: 1.4.3
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -944,6 +944,15 @@ final class SPVS_Cost_Profit {
             'spvs-profit-reports',
             array( $this, 'render_profit_reports_page' )
         );
+
+        add_submenu_page(
+            'woocommerce',
+            __( 'SPVS Data Recovery', 'spvs-cost-profit' ),
+            __( 'SPVS Data Recovery', 'spvs-cost-profit' ),
+            'manage_woocommerce',
+            'spvs-data-recovery',
+            array( $this, 'render_data_recovery_page' )
+        );
     }
 
     public function render_profit_reports_page() {
@@ -1113,6 +1122,142 @@ final class SPVS_Cost_Profit {
             </script>
             <?php
         }
+
+        echo '</div>';
+    }
+
+    /** --------------- Data Recovery Page --------------- */
+    public function render_data_recovery_page() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+
+        global $wpdb;
+
+        // Handle recovery action
+        if ( isset( $_POST['spvs_recover_from_revisions'] ) ) {
+            check_admin_referer( 'spvs_recover_from_revisions' );
+
+            $recovered = 0;
+            $revision_costs = $wpdb->get_results( "
+                SELECT pm.post_id, pm.meta_value as cost, p.post_parent
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = '" . self::PRODUCT_COST_META . "'
+                AND p.post_type = 'revision'
+                ORDER BY p.post_modified DESC
+            " );
+
+            if ( ! empty( $revision_costs ) ) {
+                $processed_parents = array();
+                foreach ( $revision_costs as $rev ) {
+                    if ( $rev->post_parent && ! in_array( $rev->post_parent, $processed_parents ) ) {
+                        $current_cost = get_post_meta( $rev->post_parent, self::PRODUCT_COST_META, true );
+                        if ( empty( $current_cost ) ) {
+                            update_post_meta( $rev->post_parent, self::PRODUCT_COST_META, $rev->cost );
+                            $recovered++;
+                            $processed_parents[] = $rev->post_parent;
+                        }
+                    }
+                }
+            }
+
+            if ( $recovered > 0 ) {
+                // Create backup after recovery
+                $this->create_cost_data_backup();
+                echo '<div class="notice notice-success"><p>' . sprintf( esc_html__( '✅ Successfully recovered %d product costs from revisions! A backup has been created.', 'spvs-cost-profit' ), $recovered ) . '</p></div>';
+            } else {
+                echo '<div class="notice notice-warning"><p>' . esc_html__( 'No products were recovered. Either data already exists or no revision data was found.', 'spvs-cost-profit' ) . '</p></div>';
+            }
+        }
+
+        // Get current cost data count
+        $current_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta}
+            WHERE meta_key = '" . self::PRODUCT_COST_META . "'
+        " );
+
+        // Check for revision data
+        $revision_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '" . self::PRODUCT_COST_META . "'
+            AND p.post_type = 'revision'
+        " );
+
+        echo '<div class="wrap">';
+        echo '<h1>🔧 ' . esc_html__( 'Data Recovery & Diagnostics', 'spvs-cost-profit' ) . '</h1>';
+        echo '<p>' . esc_html__( 'This page helps you diagnose and recover cost data if it has been lost.', 'spvs-cost-profit' ) . '</p>';
+
+        // Current Data Status
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid ' . ( $current_count > 0 ? '#00a32a' : '#d63638' ) . '; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h2>' . esc_html__( 'Current Data Status', 'spvs-cost-profit' ) . '</h2>';
+
+        if ( $current_count > 0 ) {
+            echo '<p style="font-size: 18px;"><strong style="color: #00a32a;">✅ ' . esc_html__( 'Cost data found:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( number_format( $current_count ) ) . ' ' . esc_html__( 'products with cost prices', 'spvs-cost-profit' ) . '</p>';
+            echo '<p>' . esc_html__( 'Your cost data appears to be intact.', 'spvs-cost-profit' ) . '</p>';
+        } else {
+            echo '<p style="font-size: 18px;"><strong style="color: #d63638;">⚠️ ' . esc_html__( 'No cost data found', 'spvs-cost-profit' ) . '</strong></p>';
+            echo '<p>' . esc_html__( 'No product cost prices were found in the database. This may indicate data loss.', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '</div>';
+
+        // Revision Backup Status
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid ' . ( $revision_count > 0 ? '#2271b1' : '#dba617' ) . '; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h2>' . esc_html__( 'Backup Data in Revisions', 'spvs-cost-profit' ) . '</h2>';
+
+        if ( $revision_count > 0 ) {
+            echo '<p style="font-size: 18px;"><strong style="color: #2271b1;">💾 ' . esc_html__( 'Backup data found:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( number_format( $revision_count ) ) . ' ' . esc_html__( 'cost entries in post revisions', 'spvs-cost-profit' ) . '</p>';
+            echo '<p>' . esc_html__( 'WordPress has saved cost data in post revision history. This can be used for recovery.', 'spvs-cost-profit' ) . '</p>';
+
+            if ( $current_count == 0 ) {
+                echo '<form method="post">';
+                wp_nonce_field( 'spvs_recover_from_revisions' );
+                echo '<button type="submit" name="spvs_recover_from_revisions" class="button button-primary button-hero" style="margin-top: 15px;">🔄 ' . esc_html__( 'Recover Cost Data from Revisions', 'spvs-cost-profit' ) . '</button>';
+                echo '<p class="description">' . esc_html__( 'This will restore cost data from WordPress post revisions for products that are missing cost values. A backup will be created after recovery.', 'spvs-cost-profit' ) . '</p>';
+                echo '</form>';
+            } else {
+                echo '<p><em>' . esc_html__( 'Recovery not needed - current data exists.', 'spvs-cost-profit' ) . '</em></p>';
+            }
+        } else {
+            echo '<p style="font-size: 18px;"><strong style="color: #dba617;">⚠️ ' . esc_html__( 'No backup data found', 'spvs-cost-profit' ) . '</strong></p>';
+            echo '<p>' . esc_html__( 'No cost data was found in WordPress post revisions.', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '</div>';
+
+        // Export Current Data
+        if ( $current_count > 0 ) {
+            $export_url = add_query_arg( array(
+                'action'   => 'spvs_export_backup',
+                '_wpnonce' => wp_create_nonce( 'spvs_export_backup' )
+            ), admin_url( 'admin-post.php' ) );
+
+            echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid #2271b1; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+            echo '<h2>' . esc_html__( 'Export Current Data', 'spvs-cost-profit' ) . '</h2>';
+            echo '<p>' . esc_html__( 'Download your current cost data as a CSV backup file.', 'spvs-cost-profit' ) . '</p>';
+            echo '<a href="' . esc_url( $export_url ) . '" class="button button-primary">📥 ' . esc_html__( 'Download Cost Data Backup (CSV)', 'spvs-cost-profit' ) . '</a>';
+            echo '</div>';
+        }
+
+        // Alternative Recovery Options
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h2>' . esc_html__( 'Alternative Recovery Options', 'spvs-cost-profit' ) . '</h2>';
+        echo '<ul style="line-height: 1.8;">';
+        echo '<li><strong>' . esc_html__( 'Automatic Backups:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Check WooCommerce > SPVS Inventory > Data Backup & Protection for automatic backups (created daily at 3 AM).', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Hosting Backup:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Contact your hosting provider to restore your database from a backup before the data loss occurred.', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Previous CSV Export:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'If you have a previous CSV export, use the import feature at WooCommerce > SPVS Inventory to restore costs.', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Manual Entry:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Edit products individually to re-enter cost prices.', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '</div>';
+
+        // Prevention Tips
+        echo '<div style="background: #f0f6fc; padding: 20px; margin: 20px 0; border-left: 4px solid #2271b1;">';
+        echo '<h2>🛡️ ' . esc_html__( 'Preventing Future Data Loss', 'spvs-cost-profit' ) . '</h2>';
+        echo '<ul style="line-height: 1.8;">';
+        echo '<li><strong>' . esc_html__( 'Daily Backups:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'The plugin automatically backs up cost data daily at 3:00 AM (keeps 7 days).', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Manual Backups:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Create backups anytime at WooCommerce > SPVS Inventory > "Create Backup Now".', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Export Regularly:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Download CSV backups weekly and store them securely offline.', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Before Updates:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Always create a manual backup before updating plugins or WordPress.', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '</div>';
 
         echo '</div>';
     }

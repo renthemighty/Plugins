@@ -2,6 +2,23 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.3] - 2024-11-30
+
+### Added
+- **Built-in Data Recovery Page** - New admin page at WooCommerce > SPVS Data Recovery
+  - Visual diagnostic tool for checking cost data status
+  - One-click recovery from WordPress revisions
+  - Shows current data count and revision backup count
+  - Export current data as CSV backup
+  - Automatic backup creation after recovery
+  - Alternative recovery options and prevention tips
+- Recovery now accessible directly from WordPress admin (no file upload needed)
+
+### Improved
+- Easier access to recovery tools (integrated into plugin menu)
+- Clear visual indicators for data status (green = ok, red = missing)
+- Step-by-step recovery guidance
+
 ## [1.4.2] - 2024-11-30
 
 ### Fixed
