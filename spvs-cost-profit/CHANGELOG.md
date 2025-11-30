@@ -2,6 +2,20 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.6] - 2024-11-30
+
+### Fixed
+- **Net Sales Calculation - Line Item Method** - Now uses exact WooCommerce Analytics methodology
+  - Changed from Order Total - Tax - Shipping to summing product line items
+  - `$item->get_total()` for each line item (products after discounts)
+  - Excludes tax, shipping, and fees automatically
+  - Matches WooCommerce Analytics Net Sales precisely
+
+### Technical
+- Loop through `$order->get_items()` and sum `$item->get_total()`
+- This is identical to how WooCommerce Analytics calculates "Net Sales"
+- Ensures revenue = Gross Sales - Coupons - Refunds (product sales only)
+
 ## [1.4.5] - 2024-11-30
 
 ### Fixed
