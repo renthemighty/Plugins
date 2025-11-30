@@ -1,0 +1,97 @@
+# Changelog
+
+All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
+
+## [1.4.0] - 2024-11-30
+
+### Added
+- **Monthly Profit Reports** - New dedicated admin page for viewing profit trends
+  - Interactive charts powered by Chart.js
+  - Customizable date range selection (defaults to last 12 months)
+  - Monthly breakdown with order count, revenue, profit, and margins
+  - Average profit per order calculations
+  - CSV export for monthly profit data
+- Revenue vs Profit comparison charts
+- Profit margin percentage calculations
+- Summary cards showing total profit, revenue, and average margin
+
+### Improved
+- Admin menu structure with separate "SPVS Profit Reports" page
+- Better compatibility with WooCommerce HPOS for profit calculations
+- Enhanced database queries for monthly report generation
+- Performance optimizations for large order datasets
+
+### Technical
+- Added Chart.js CDN integration for visualizations
+- New method: `get_monthly_profit_data()` for report generation
+- New action: `admin_post_spvs_export_monthly_profit` for CSV exports
+- New filter: `spvs_profit_report_order_statuses` to customize included order statuses
+- Proper uninstall.php for complete data cleanup
+- WordPress plugin repository ready documentation
+
+## [1.3.0] - Previous Release
+
+### Added
+- CSV export for items with missing costs
+- Download unmatched rows from imports
+- Cost template CSV download
+
+### Improved
+- Import matching by SKU, Product ID, and Slug
+- Better error handling in imports
+- Enhanced product matching in CSV imports
+
+## [1.2.0] - Previous Release
+
+### Added
+- Inventory value calculations (TCOP/Retail)
+- TCOP summary bar on orders screen
+- Daily automatic recalculation via cron
+- CSV export/import for costs
+- Customizable column selection for exports
+
+### Improved
+- Batch processing for large inventories
+- Cached inventory totals for performance
+
+## [1.1.0] - Previous Release
+
+### Added
+- Profit column to orders list
+- Sortable profit column
+- HPOS compatibility declaration
+
+### Improved
+- Order profit recalculation on refunds
+- Better handling of order updates
+
+## [1.0.0] - Initial Release
+
+### Added
+- Product cost field for simple and variable products
+- Automatic profit calculation on checkout
+- Profit display on order details
+- Variation cost support with parent inheritance
+- Order line item profit tracking
+
+---
+
+## Upgrade Notes
+
+### Upgrading from 1.3.0 to 1.4.0
+- No database changes required
+- All existing data is preserved
+- Monthly reports work with existing order data
+- New admin page automatically appears under WooCommerce menu
+
+### Upgrading from 1.x to 1.4.0
+- Safe to upgrade - backward compatible
+- No data loss
+- Recommended: Back up database before any major upgrade
+- After upgrade, visit WooCommerce > SPVS Profit Reports to see new features
+
+## Breaking Changes
+None in this release. All upgrades are backward compatible.
+
+## Deprecations
+None in this release.
