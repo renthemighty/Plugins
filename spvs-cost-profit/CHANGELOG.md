@@ -2,6 +2,35 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.1] - 2024-11-30
+
+### 🔒 Data Protection (Critical Update)
+
+**IMPORTANT**: This release adds comprehensive data backup and protection to prevent cost data loss.
+
+### Added
+- **Automatic Daily Backups** - Cost data is automatically backed up every day at 3:00 AM
+- **Manual Backup Creation** - Create on-demand backups with one click
+- **Backup Management** - View, download, and restore from up to 7 days of backups
+- **One-Click Restore** - Restore cost data from any backup (creates safety backup first)
+- **Backup Export** - Download backups as CSV for external storage
+- **Activation Backup** - Automatic backup created when plugin is activated/upgraded
+- **Backup Rotation** - Automatically maintains 7 most recent backups
+- **Recovery Tool** - Standalone diagnostic and recovery script (spvs-recovery.php)
+
+### Improved
+- Enhanced data safety during imports and updates
+- Better error handling and user feedback
+- Backup UI integrated into inventory admin page
+- Protection against accidental data loss
+
+### Technical
+- New backup constants and methods
+- Backup data stored in wp_options table
+- Scheduled daily cron: `spvs_daily_cost_backup`
+- New admin actions: backup, restore, export_backup
+- Recovery diagnostic tool for emergency situations
+
 ## [1.4.0] - 2024-11-30
 
 ### Added

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.0
+ * Version: 1.4.1
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -31,6 +31,12 @@ final class SPVS_Cost_Profit {
 
     // Import diagnostics
     const IMPORT_MISSES_TRANSIENT   = 'spvs_cost_import_misses';
+
+    // Data backup & protection
+    const BACKUP_OPTION_PREFIX      = 'spvs_cost_backup_';
+    const BACKUP_LATEST_OPTION      = 'spvs_cost_backup_latest';
+    const BACKUP_COUNT_OPTION       = 'spvs_cost_backup_count';
+    const MAX_BACKUPS               = 7; // Keep 7 days of backups
 
     private static $instance = null;
 
@@ -97,6 +103,13 @@ final class SPVS_Cost_Profit {
         /** Daily cron for inventory totals */
         add_action( 'init', array( $this, 'maybe_schedule_daily_cron' ) );
         add_action( 'spvs_daily_inventory_recalc', array( $this, 'recalculate_inventory_totals' ) );
+
+        /** Data backup & protection */
+        add_action( 'init', array( $this, 'maybe_schedule_backup_cron' ) );
+        add_action( 'spvs_daily_cost_backup', array( $this, 'create_cost_data_backup' ) );
+        add_action( 'admin_post_spvs_backup_costs_now', array( $this, 'handle_manual_backup' ) );
+        add_action( 'admin_post_spvs_restore_costs', array( $this, 'handle_restore_costs' ) );
+        add_action( 'admin_post_spvs_export_backup', array( $this, 'export_backup_data' ) );
 
         /** Dedicated admin pages under WooCommerce */
         add_action( 'admin_menu', array( $this, 'register_admin_pages' ) );
@@ -383,6 +396,198 @@ final class SPVS_Cost_Profit {
             'qty_gt0' => (int) $qty_gt0,
             'updated' => time(),
         ), false );
+    }
+
+    /** ---------------- Data Backup & Protection ---------------- */
+    public function maybe_schedule_backup_cron() {
+        if ( ! wp_next_scheduled( 'spvs_daily_cost_backup' ) ) {
+            $timestamp = strtotime( '03:00:00' ); // 3 AM daily
+            if ( ! $timestamp || $timestamp <= time() ) $timestamp = time() + HOUR_IN_SECONDS;
+            wp_schedule_event( $timestamp, 'daily', 'spvs_daily_cost_backup' );
+        }
+    }
+
+    public function create_cost_data_backup() {
+        global $wpdb;
+
+        // Get all cost data
+        $costs = $wpdb->get_results( "
+            SELECT pm.post_id, pm.meta_value as cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '" . self::PRODUCT_COST_META . "'
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+        ", ARRAY_A );
+
+        if ( empty( $costs ) ) return false;
+
+        // Create backup with timestamp
+        $backup_key = self::BACKUP_OPTION_PREFIX . date( 'Y_m_d_H_i_s' );
+        $backup_data = array(
+            'timestamp' => time(),
+            'count'     => count( $costs ),
+            'data'      => $costs,
+            'version'   => '1.4.1'
+        );
+
+        // Save backup
+        update_option( $backup_key, $backup_data, false );
+
+        // Update latest backup pointer
+        update_option( self::BACKUP_LATEST_OPTION, $backup_key, false );
+
+        // Rotate old backups (keep only MAX_BACKUPS)
+        $this->rotate_old_backups();
+
+        return $backup_key;
+    }
+
+    private function rotate_old_backups() {
+        global $wpdb;
+
+        // Get all backup options
+        $backups = $wpdb->get_results( $wpdb->prepare(
+            "SELECT option_name FROM {$wpdb->options}
+            WHERE option_name LIKE %s
+            ORDER BY option_name DESC",
+            $wpdb->esc_like( self::BACKUP_OPTION_PREFIX ) . '%'
+        ), ARRAY_A );
+
+        // Delete old backups beyond MAX_BACKUPS
+        if ( count( $backups ) > self::MAX_BACKUPS ) {
+            $to_delete = array_slice( $backups, self::MAX_BACKUPS );
+            foreach ( $to_delete as $backup ) {
+                delete_option( $backup['option_name'] );
+            }
+        }
+
+        // Update count
+        update_option( self::BACKUP_COUNT_OPTION, count( $backups ), false );
+    }
+
+    public function get_available_backups() {
+        global $wpdb;
+
+        $backups = $wpdb->get_results( $wpdb->prepare(
+            "SELECT option_name, option_value FROM {$wpdb->options}
+            WHERE option_name LIKE %s
+            ORDER BY option_name DESC",
+            $wpdb->esc_like( self::BACKUP_OPTION_PREFIX ) . '%'
+        ), ARRAY_A );
+
+        $formatted = array();
+        foreach ( $backups as $backup ) {
+            $data = maybe_unserialize( $backup['option_value'] );
+            if ( is_array( $data ) && isset( $data['timestamp'] ) ) {
+                $formatted[] = array(
+                    'key'       => $backup['option_name'],
+                    'timestamp' => $data['timestamp'],
+                    'count'     => isset( $data['count'] ) ? $data['count'] : 0,
+                    'date'      => date( 'Y-m-d H:i:s', $data['timestamp'] ),
+                    'age'       => human_time_diff( $data['timestamp'], time() ) . ' ago'
+                );
+            }
+        }
+
+        return $formatted;
+    }
+
+    public function handle_manual_backup() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_backup_costs_now' );
+
+        $backup_key = $this->create_cost_data_backup();
+
+        if ( $backup_key ) {
+            $redirect = add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'backup_created'
+            ), admin_url( 'admin.php' ) );
+        } else {
+            $redirect = add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'backup_failed'
+            ), admin_url( 'admin.php' ) );
+        }
+
+        wp_safe_redirect( $redirect );
+        exit;
+    }
+
+    public function handle_restore_costs() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_restore_costs' );
+
+        $backup_key = isset( $_POST['backup_key'] ) ? sanitize_text_field( $_POST['backup_key'] ) : '';
+
+        if ( empty( $backup_key ) ) {
+            wp_safe_redirect( add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'restore_no_backup'
+            ), admin_url( 'admin.php' ) ) );
+            exit;
+        }
+
+        // Get backup data
+        $backup_data = get_option( $backup_key );
+
+        if ( ! $backup_data || ! isset( $backup_data['data'] ) ) {
+            wp_safe_redirect( add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'restore_invalid_backup'
+            ), admin_url( 'admin.php' ) ) );
+            exit;
+        }
+
+        // Create a backup before restoring (safety!)
+        $this->create_cost_data_backup();
+
+        // Restore costs
+        $restored = 0;
+        foreach ( $backup_data['data'] as $item ) {
+            if ( isset( $item['post_id'] ) && isset( $item['cost'] ) ) {
+                update_post_meta( $item['post_id'], self::PRODUCT_COST_META, $item['cost'] );
+                $restored++;
+            }
+        }
+
+        wp_safe_redirect( add_query_arg( array(
+            'page'     => 'spvs-inventory',
+            'spvs_msg' => 'restore_success:' . $restored
+        ), admin_url( 'admin.php' ) ) );
+        exit;
+    }
+
+    public function export_backup_data() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_export_backup' );
+
+        $backup_key = isset( $_GET['backup_key'] ) ? sanitize_text_field( $_GET['backup_key'] ) : '';
+
+        if ( empty( $backup_key ) ) {
+            $backup_key = get_option( self::BACKUP_LATEST_OPTION );
+        }
+
+        $backup_data = get_option( $backup_key );
+
+        if ( ! $backup_data || ! isset( $backup_data['data'] ) ) {
+            wp_die( esc_html__( 'Backup not found.', 'spvs-cost-profit' ) );
+        }
+
+        $filename = 'spvs-backup-' . date( 'Y-m-d-His', $backup_data['timestamp'] ) . '.csv';
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'Content-Disposition: attachment; filename=' . $filename );
+
+        $out = fopen( 'php://output', 'w' );
+        fputcsv( $out, array( 'product_id', 'cost' ) );
+
+        foreach ( $backup_data['data'] as $item ) {
+            fputcsv( $out, array( $item['post_id'], $item['cost'] ) );
+        }
+
+        fclose( $out );
+        exit;
     }
 
     /** ---------------- CSV Import helpers ---------------- */
@@ -937,6 +1142,13 @@ final class SPVS_Cost_Profit {
 
         echo '<div class="wrap"><h1>' . esc_html__( 'SPVS Inventory Value', 'spvs-cost-profit' ) . '</h1>';
 
+        // Auto-recovery notice
+        $auto_recovered = get_transient( 'spvs_auto_recovery_done' );
+        if ( $auto_recovered ) {
+            echo '<div class="notice notice-success is-dismissible"><p><strong>🎉 ' . esc_html__( 'Auto-Recovery Successful!', 'spvs-cost-profit' ) . '</strong> ' . sprintf( esc_html__( 'Recovered %d product costs from revisions during plugin upgrade. A backup has been created.', 'spvs-cost-profit' ), (int) $auto_recovered ) . '</p></div>';
+            delete_transient( 'spvs_auto_recovery_done' );
+        }
+
         // Notices
         if ( isset( $_GET['spvs_msg'] ) ) {
             $m = sanitize_text_field( wp_unslash( $_GET['spvs_msg'] ) );
@@ -979,6 +1191,82 @@ final class SPVS_Cost_Profit {
         echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_missing_csv' ) ) . '">' . esc_html__( 'Download items with Qty>0 & missing cost', 'spvs-cost-profit' ) . '</a>';
         echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_recalc_inventory&_wpnonce=' . wp_create_nonce( 'spvs_recalc_inventory' ) ) ) . '">' . esc_html__( 'Recalculate Now', 'spvs-cost-profit' ) . '</a>';
         echo '</form>';
+
+        // Data Backup & Restore Section
+        $backups = $this->get_available_backups();
+        $latest_backup = ! empty( $backups ) ? $backups[0] : null;
+
+        echo '<hr style="margin:18px 0;"><h2>🔒 ' . esc_html__( 'Data Backup & Protection', 'spvs-cost-profit' ) . ' <span style="font-size:14px; color:#d63638; font-weight:normal;">(NEW in v1.4.1)</span></h2>';
+
+        // Handle backup/restore messages
+        if ( isset( $_GET['spvs_msg'] ) ) {
+            $m = sanitize_text_field( wp_unslash( $_GET['spvs_msg'] ) );
+            if ( 'backup_created' === $m ) {
+                echo '<div class="notice notice-success"><p>' . esc_html__( '✅ Backup created successfully!', 'spvs-cost-profit' ) . '</p></div>';
+            } elseif ( 'backup_failed' === $m ) {
+                echo '<div class="notice notice-error"><p>' . esc_html__( '❌ Backup failed. No cost data found.', 'spvs-cost-profit' ) . '</p></div>';
+            } elseif ( 0 === strpos( $m, 'restore_success:' ) ) {
+                $restored = str_replace( 'restore_success:', '', $m );
+                echo '<div class="notice notice-success"><p>' . sprintf( esc_html__( '✅ Successfully restored %d product costs!', 'spvs-cost-profit' ), (int) $restored ) . '</p></div>';
+            } elseif ( 'restore_invalid_backup' === $m ) {
+                echo '<div class="notice notice-error"><p>' . esc_html__( '❌ Invalid backup selected.', 'spvs-cost-profit' ) . '</p></div>';
+            }
+        }
+
+        echo '<div style="background:#f8f9fa; padding:15px; border-radius:5px; border-left:4px solid #2271b1; margin:15px 0;">';
+        echo '<p style="margin:0 0 10px 0;"><strong>' . esc_html__( 'Automatic Protection:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Your cost data is automatically backed up daily at 3:00 AM. Up to 7 backups are kept.', 'spvs-cost-profit' ) . '</p>';
+
+        if ( $latest_backup ) {
+            echo '<p style="margin:0;"><strong>' . esc_html__( 'Latest Backup:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( $latest_backup['date'] ) . ' (' . esc_html( $latest_backup['age'] ) . ') - ' . esc_html( $latest_backup['count'] ) . ' ' . esc_html__( 'products', 'spvs-cost-profit' ) . '</p>';
+        } else {
+            echo '<p style="margin:0; color:#d63638;"><strong>' . esc_html__( '⚠️ No backups found.', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Click "Create Backup Now" to create your first backup.', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '</div>';
+
+        // Manual backup button
+        echo '<div style="margin:15px 0;">';
+        echo '<a href="' . esc_url( admin_url( 'admin-post.php?action=spvs_backup_costs_now&_wpnonce=' . wp_create_nonce( 'spvs_backup_costs_now' ) ) ) . '" class="button button-primary">💾 ' . esc_html__( 'Create Backup Now', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
+
+        // Available backups list
+        if ( ! empty( $backups ) ) {
+            echo '<h3>' . esc_html__( 'Available Backups', 'spvs-cost-profit' ) . '</h3>';
+            echo '<table class="widefat striped"><thead><tr>';
+            echo '<th>' . esc_html__( 'Date & Time', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Age', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Products', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Actions', 'spvs-cost-profit' ) . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ( $backups as $backup ) {
+                echo '<tr>';
+                echo '<td><strong>' . esc_html( $backup['date'] ) . '</strong></td>';
+                echo '<td>' . esc_html( $backup['age'] ) . '</td>';
+                echo '<td>' . esc_html( $backup['count'] ) . '</td>';
+                echo '<td>';
+
+                // Restore form
+                echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline; margin-right:10px;" onsubmit="return confirm(\'' . esc_js( __( 'Are you sure you want to restore from this backup? Current data will be backed up first.', 'spvs-cost-profit' ) ) . '\');">';
+                echo '<input type="hidden" name="action" value="spvs_restore_costs" />';
+                echo '<input type="hidden" name="backup_key" value="' . esc_attr( $backup['key'] ) . '" />';
+                wp_nonce_field( 'spvs_restore_costs' );
+                echo '<button type="submit" class="button">🔄 ' . esc_html__( 'Restore', 'spvs-cost-profit' ) . '</button>';
+                echo '</form>';
+
+                // Export backup
+                $export_backup_url = add_query_arg( array(
+                    'action'     => 'spvs_export_backup',
+                    '_wpnonce'   => wp_create_nonce( 'spvs_export_backup' ),
+                    'backup_key' => $backup['key']
+                ), admin_url( 'admin-post.php' ) );
+                echo '<a href="' . esc_url( $export_backup_url ) . '" class="button">📥 ' . esc_html__( 'Download', 'spvs-cost-profit' ) . '</a>';
+
+                echo '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+        }
 
         // Upload form
         echo '<hr style="margin:18px 0;"><h2>' . esc_html__( 'Import Costs (CSV)', 'spvs-cost-profit' ) . '</h2>';
@@ -1089,12 +1377,62 @@ final class SPVS_Cost_Profit {
 register_activation_hook( __FILE__, function() {
     if ( version_compare( PHP_VERSION, '7.4', '<' ) ) { deactivate_plugins( plugin_basename( __FILE__ ) ); wp_die( esc_html__( 'SPVS Cost & Profit requires PHP 7.4 or higher.', 'spvs-cost-profit' ) ); }
     if ( ! class_exists( 'WooCommerce' ) ) { deactivate_plugins( plugin_basename( __FILE__ ) ); wp_die( esc_html__( 'SPVS Cost & Profit requires WooCommerce to be active.', 'spvs-cost-profit' ) ); }
+
+    // Auto-recovery and backup on activation/upgrade (v1.4.1+)
+    if ( class_exists( 'SPVS_Cost_Profit' ) ) {
+        $instance = SPVS_Cost_Profit::instance();
+
+        // Check if cost data exists
+        global $wpdb;
+        $cost_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta}
+            WHERE meta_key = '_spvs_cost_price'
+        " );
+
+        // If no cost data, attempt recovery from revisions
+        if ( $cost_count == 0 ) {
+            $recovered = 0;
+            $revision_costs = $wpdb->get_results( "
+                SELECT pm.post_id, pm.meta_value as cost, p.post_parent
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = '_spvs_cost_price'
+                AND p.post_type = 'revision'
+                ORDER BY p.post_modified DESC
+            " );
+
+            if ( ! empty( $revision_costs ) ) {
+                $processed_parents = array();
+                foreach ( $revision_costs as $rev ) {
+                    if ( $rev->post_parent && ! in_array( $rev->post_parent, $processed_parents ) ) {
+                        update_post_meta( $rev->post_parent, '_spvs_cost_price', $rev->cost );
+                        $recovered++;
+                        $processed_parents[] = $rev->post_parent;
+                    }
+                }
+
+                // Set a flag to show recovery message
+                if ( $recovered > 0 ) {
+                    set_transient( 'spvs_auto_recovery_done', $recovered, HOUR_IN_SECONDS );
+                }
+            }
+        }
+
+        // Create initial backup
+        if ( method_exists( $instance, 'create_cost_data_backup' ) ) {
+            $instance->create_cost_data_backup();
+        }
+    }
 } );
 
 // Deactivation: clear cron/transient (leave data intact until uninstall)
 register_deactivation_hook( __FILE__, function() {
     $ts = wp_next_scheduled( 'spvs_daily_inventory_recalc' );
     if ( $ts ) { wp_unschedule_event( $ts, 'spvs_daily_inventory_recalc' ); }
+
+    $ts2 = wp_next_scheduled( 'spvs_daily_cost_backup' );
+    if ( $ts2 ) { wp_unschedule_event( $ts2, 'spvs_daily_cost_backup' ); }
+
     delete_transient( SPVS_Cost_Profit::RECALC_LOCK_TRANSIENT );
 } );
 
