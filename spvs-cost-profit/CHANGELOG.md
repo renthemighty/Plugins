@@ -2,6 +2,20 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.7] - 2024-11-30
+
+### Fixed
+- **Gross Sales Calculation** - Now matches WooCommerce Analytics "Gross sales" metric
+  - Changed from `$item->get_total()` (after discounts) to `$item->get_subtotal()` (before discounts)
+  - Gross Sales = Sum of line item subtotals BEFORE discounts/coupons are applied
+  - Verified against WooCommerce OrdersStatsDataStore source code on GitHub
+  - Matches the exact "Gross sales" figure shown in WooCommerce Analytics Revenue report
+
+### Technical
+- Using `$item->get_subtotal()` instead of `$item->get_total()`
+- Subtotal returns product price × quantity before any coupon discounts
+- Referenced: [WooCommerce Admin DataStore.php](https://github.com/woocommerce/woocommerce-admin/blob/main/src/API/Reports/Orders/Stats/DataStore.php)
+
 ## [1.4.6] - 2024-11-30
 
 ### Fixed
