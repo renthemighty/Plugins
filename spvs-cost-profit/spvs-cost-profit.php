@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.7.0
+ * Version: 1.7.1
  * Author: Megatron
  * License: GPL-2.0+
  */
