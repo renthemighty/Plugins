@@ -1,11 +1,16 @@
 jQuery(document).ready(function($) {
     let totalRecalculated = 0;
+    let dateRange = { start: '', end: '' };
 
     // Start recalculation when button is clicked
     $(document).on('click', '#spvs-recalc-orders-btn', function(e) {
         e.preventDefault();
 
-        if (!confirm('Recalculate profit for ALL historical orders using current cost data?\n\nThis will update all orders to reflect any cost changes made since they were originally placed.')) {
+        // Get date range from button data attributes
+        dateRange.start = $(this).data('start-date');
+        dateRange.end = $(this).data('end-date');
+
+        if (!confirm('Recalculate profit for orders from ' + dateRange.start + ' to ' + dateRange.end + '?\n\nThis will update orders in this date range using current cost data.')) {
             return;
         }
 
@@ -27,7 +32,9 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'spvs_recalc_orders_batch',
                 nonce: spvsRecalcOrders.nonce,
-                offset: offset
+                offset: offset,
+                start_date: dateRange.start,
+                end_date: dateRange.end
             },
             success: function(response) {
                 if (response.success) {
