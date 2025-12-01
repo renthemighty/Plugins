@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.6-debug
+ * Version: 1.9.7-debug
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -962,6 +962,12 @@ final class SPVS_Cost_Profit {
         $debug_info['hpos_enabled'] = $hpos_exists ? 'Yes' : 'No';
 
         if ( $hpos_exists ) {
+            // CRITICAL: Check what statuses actually exist in the database
+            $actual_statuses = $wpdb->get_results(
+                "SELECT DISTINCT status, COUNT(*) as count FROM {$orders_table} GROUP BY status ORDER BY count DESC LIMIT 10"
+            );
+            $debug_info['actual_statuses_in_db'] = $actual_statuses;
+
             $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) );
             $hpos_statuses = array_map( function( $status ) { return str_replace( 'wc-', '', $status ); }, $order_statuses );
             $hpos_status_list = "'" . implode( "','", array_map( 'esc_sql', $hpos_statuses ) ) . "'";
@@ -1035,6 +1041,15 @@ final class SPVS_Cost_Profit {
                 echo '<tr><td><strong>Total Orders Found:</strong></td><td>' . esc_html( $debug_info['total_orders'] ) . '</td></tr>';
                 echo '<tr><td><strong>Orders With Profit Metadata:</strong></td><td>' . esc_html( $debug_info['orders_with_profit'] ) . '</td></tr>';
                 echo '<tr><td><strong>Total Revenue (Orders):</strong></td><td>' . wp_kses_post( $debug_info['total_revenue'] ) . '</td></tr>';
+
+                // Show actual statuses in database
+                if ( isset( $debug_info['actual_statuses_in_db'] ) && ! empty( $debug_info['actual_statuses_in_db'] ) ) {
+                    $status_list = array();
+                    foreach ( $debug_info['actual_statuses_in_db'] as $st ) {
+                        $status_list[] = esc_html( $st->status ) . ' (' . esc_html( $st->count ) . ')';
+                    }
+                    echo '<tr style="background: #ffffcc;"><td><strong>⚠️ Actual Statuses in DB:</strong></td><td>' . implode( ', ', $status_list ) . '</td></tr>';
+                }
             }
 
             echo '</tbody></table>';
