@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.16
+ * Version: 1.5.17
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1168,23 +1168,19 @@ final class SPVS_Cost_Profit {
             'return'  => 'ids',
         );
 
-        // Add date range filter if provided - use proper format
+        // Add date range filter if provided
         if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
-            // Convert to timestamps for more reliable filtering
-            $start_timestamp = strtotime( $start_date . ' 00:00:00' );
-            $end_timestamp = strtotime( $end_date . ' 23:59:59' );
-
-            if ( $start_timestamp && $end_timestamp ) {
-                $order_args['date_created'] = '>' . $start_timestamp;
-                $order_args['date_before'] = date( 'Y-m-d H:i:s', $end_timestamp );
-                $order_args['date_after'] = date( 'Y-m-d H:i:s', $start_timestamp );
-            }
+            // Use WooCommerce date range format: start...end
+            $order_args['date_created'] = $start_date . '...' . $end_date;
         }
 
-        // Get total count (cache it for subsequent batches)
+        // Get total count and cache order IDs for subsequent batches
         if ( $is_first_batch ) {
             $all_order_ids = wc_get_orders( $order_args );
-            $total = is_array( $all_order_ids ) ? count( $all_order_ids ) : 0;
+            if ( ! is_array( $all_order_ids ) ) {
+                $all_order_ids = array();
+            }
+            $total = count( $all_order_ids );
 
             if ( $total <= 0 ) {
                 wp_send_json_error( array(
@@ -1192,18 +1188,16 @@ final class SPVS_Cost_Profit {
                 ) );
             }
 
+            // Cache both total and order IDs
             set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
+            set_transient( 'spvs_recalc_order_ids', $all_order_ids, HOUR_IN_SECONDS );
         } else {
             $total = (int) get_transient( 'spvs_recalc_total' );
-            if ( ! $total ) {
+            $all_order_ids = get_transient( 'spvs_recalc_order_ids' );
+
+            if ( ! $total || ! is_array( $all_order_ids ) ) {
                 wp_send_json_error( array( 'message' => 'Session expired. Please refresh and try again.' ) );
             }
-        }
-
-        // Get batch of order IDs to process
-        $all_order_ids = wc_get_orders( $order_args );
-        if ( ! is_array( $all_order_ids ) ) {
-            $all_order_ids = array();
         }
 
         // Slice the array to get current batch
@@ -1226,9 +1220,10 @@ final class SPVS_Cost_Profit {
         $processed = $offset + $recalculated;
         $is_complete = ( $processed >= $total || empty( $batch_ids ) );
 
-        // Clean up transient on completion
+        // Clean up transients on completion
         if ( $is_complete ) {
             delete_transient( 'spvs_recalc_total' );
+            delete_transient( 'spvs_recalc_order_ids' );
         }
 
         wp_send_json_success( array(
