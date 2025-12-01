@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.8.9
+ * Version: 1.9.0
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -364,11 +364,15 @@ final class SPVS_Cost_Profit {
                 if ( $qty <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
 
                 $unit_cost = (float) $this->get_product_cost( $pid );
-
-                // Skip products without a cost value
-                if ( $unit_cost <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
-
                 $reg_price = (float) $product->get_regular_price();
+
+                // Skip if ANY value is 0: stock, cost, or regular price
+                if ( $unit_cost <= 0 || $reg_price <= 0 ) {
+                    delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                    delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                    continue;
+                }
+
                 $line_cost   = $unit_cost * $qty;
                 $line_retail = $reg_price * $qty;
 
