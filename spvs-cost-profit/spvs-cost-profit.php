@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.12
+ * Version: 1.5.13
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -506,32 +506,21 @@ final class SPVS_Cost_Profit {
 
                 // For variations: Try direct meta access FIRST (more reliable)
                 if ( $product->is_type( 'variation' ) ) {
-                    // Try variation's own price (active selling price)
-                    $var_price = get_post_meta( $pid, '_price', true );
-                    if ( $var_price !== '' && $var_price !== false && $var_price !== null ) {
-                        $sell_price = (float) $var_price;
-                    }
+                    // Try variation's own price - prioritize _regular_price for variations
+                    $sell_price = (float) get_post_meta( $pid, '_regular_price', true );
 
-                    // Try variation's regular price
+                    // Fallback to _price if no regular price
                     if ( $sell_price <= 0 ) {
-                        $var_regular = get_post_meta( $pid, '_regular_price', true );
-                        if ( $var_regular !== '' && $var_regular !== false && $var_regular !== null ) {
-                            $sell_price = (float) $var_regular;
-                        }
+                        $sell_price = (float) get_post_meta( $pid, '_price', true );
                     }
 
                     // Fallback to parent product price
                     if ( $sell_price <= 0 ) {
                         $parent_id = $product->get_parent_id();
                         if ( $parent_id ) {
-                            $parent_regular = get_post_meta( $parent_id, '_regular_price', true );
-                            if ( $parent_regular !== '' && $parent_regular !== false && $parent_regular !== null ) {
-                                $sell_price = (float) $parent_regular;
-                            } else {
-                                $parent_price = get_post_meta( $parent_id, '_price', true );
-                                if ( $parent_price !== '' && $parent_price !== false && $parent_price !== null ) {
-                                    $sell_price = (float) $parent_price;
-                                }
+                            $sell_price = (float) get_post_meta( $parent_id, '_regular_price', true );
+                            if ( $sell_price <= 0 ) {
+                                $sell_price = (float) get_post_meta( $parent_id, '_price', true );
                             }
                         }
                     }
