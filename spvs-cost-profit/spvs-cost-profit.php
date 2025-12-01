@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.8.3
+ * Version: 1.8.4
  * Update URI: https://github.com/renthemighty/Plugins
  * Author: Megatron
  * License: GPL-2.0+
@@ -164,6 +164,15 @@ final class SPVS_Cost_Profit_V2 {
             'manage_woocommerce',
             'spvs-profit-reports',
             array( $this, 'render_reports_page' )
+        );
+
+        add_submenu_page(
+            'woocommerce',
+            'Product Costs',
+            'Product Costs',
+            'manage_woocommerce',
+            'spvs-product-costs',
+            array( $this, 'render_product_costs_page' )
         );
     }
 
@@ -565,6 +574,150 @@ final class SPVS_Cost_Profit_V2 {
                 'margin' => $total_revenue > 0 ? ( $total_profit / $total_revenue ) * 100 : 0,
             ),
         );
+    }
+
+    /** ============= PRODUCT COSTS PAGE ============= */
+
+    public function render_product_costs_page() {
+        global $wpdb;
+
+        // Get all simple products
+        $simple_products = $wpdb->get_results( "
+            SELECT ID FROM {$wpdb->posts}
+            WHERE post_type = 'product'
+            AND post_status = 'publish'
+            ORDER BY post_title ASC
+        " );
+
+        ?>
+        <div class="wrap">
+            <style>
+                .wrap { max-width: none !important; }
+                .spvs-costs-table { width: 100%; border-collapse: collapse; background: white; margin-top: 20px; }
+                .spvs-costs-table th { background: #f0f6fc; padding: 12px; text-align: left; font-weight: 600; border-bottom: 2px solid #2271b1; }
+                .spvs-costs-table td { padding: 12px; border-bottom: 1px solid #ddd; }
+                .spvs-costs-table tr:hover { background: #f9f9f9; }
+                .spvs-variation-row { background: #fafafa; }
+                .spvs-variation-row td:first-child { padding-left: 40px; }
+                .spvs-no-cost { color: #d63638; font-weight: bold; }
+                .spvs-has-cost { color: #00a32a; }
+            </style>
+
+            <h1>💰 Product Costs</h1>
+            <p>View all products, their regular prices, and entered cost values. Products without costs will show in red.</p>
+
+            <table class="spvs-costs-table">
+                <thead>
+                    <tr>
+                        <th>Product Name</th>
+                        <th>Type</th>
+                        <th>SKU</th>
+                        <th>Regular Price</th>
+                        <th>Cost Price</th>
+                        <th>Profit Margin</th>
+                        <th>Stock</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php
+                    if ( empty( $simple_products ) ) {
+                        echo '<tr><td colspan="7">No products found.</td></tr>';
+                    } else {
+                        foreach ( $simple_products as $row ) {
+                            $product = wc_get_product( $row->ID );
+                            if ( ! $product ) {
+                                continue;
+                            }
+
+                            $product_id = $product->get_id();
+                            $product_type = $product->get_type();
+                            $name = $product->get_name();
+                            $sku = $product->get_sku() ?: '—';
+                            $regular_price = $product->get_regular_price();
+                            $cost = $this->get_product_cost( $product_id );
+
+                            // Calculate profit margin
+                            $margin = '—';
+                            if ( $regular_price > 0 && $cost > 0 ) {
+                                $profit = $regular_price - $cost;
+                                $margin_percent = ( $profit / $regular_price ) * 100;
+                                $margin = number_format( $margin_percent, 1 ) . '%';
+                            }
+
+                            // Stock info
+                            $stock = '—';
+                            if ( $product->managing_stock() ) {
+                                $stock_qty = $product->get_stock_quantity();
+                                $stock = $stock_qty !== null ? $stock_qty : '0';
+                            }
+
+                            // Display main product
+                            ?>
+                            <tr>
+                                <td><strong><?php echo esc_html( $name ); ?></strong></td>
+                                <td><?php echo esc_html( ucfirst( $product_type ) ); ?></td>
+                                <td><?php echo esc_html( $sku ); ?></td>
+                                <td><?php echo $regular_price ? wc_price( $regular_price ) : '—'; ?></td>
+                                <td class="<?php echo $cost > 0 ? 'spvs-has-cost' : 'spvs-no-cost'; ?>">
+                                    <?php echo $cost > 0 ? wc_price( $cost ) : 'No cost entered'; ?>
+                                </td>
+                                <td><?php echo esc_html( $margin ); ?></td>
+                                <td><?php echo esc_html( $stock ); ?></td>
+                            </tr>
+                            <?php
+
+                            // If variable product, show variations
+                            if ( $product_type === 'variable' ) {
+                                $variations = $product->get_available_variations();
+                                foreach ( $variations as $variation ) {
+                                    $variation_obj = wc_get_product( $variation['variation_id'] );
+                                    if ( ! $variation_obj ) {
+                                        continue;
+                                    }
+
+                                    $var_id = $variation_obj->get_id();
+                                    $var_name = implode( ', ', $variation_obj->get_variation_attributes() );
+                                    $var_sku = $variation_obj->get_sku() ?: '—';
+                                    $var_regular_price = $variation_obj->get_regular_price();
+                                    $var_cost = $this->get_product_cost( $var_id );
+
+                                    // Calculate variation margin
+                                    $var_margin = '—';
+                                    if ( $var_regular_price > 0 && $var_cost > 0 ) {
+                                        $var_profit = $var_regular_price - $var_cost;
+                                        $var_margin_percent = ( $var_profit / $var_regular_price ) * 100;
+                                        $var_margin = number_format( $var_margin_percent, 1 ) . '%';
+                                    }
+
+                                    // Variation stock
+                                    $var_stock = '—';
+                                    if ( $variation_obj->managing_stock() ) {
+                                        $var_stock_qty = $variation_obj->get_stock_quantity();
+                                        $var_stock = $var_stock_qty !== null ? $var_stock_qty : '0';
+                                    }
+
+                                    ?>
+                                    <tr class="spvs-variation-row">
+                                        <td>↳ <?php echo esc_html( $var_name ); ?></td>
+                                        <td>Variation</td>
+                                        <td><?php echo esc_html( $var_sku ); ?></td>
+                                        <td><?php echo $var_regular_price ? wc_price( $var_regular_price ) : '—'; ?></td>
+                                        <td class="<?php echo $var_cost > 0 ? 'spvs-has-cost' : 'spvs-no-cost'; ?>">
+                                            <?php echo $var_cost > 0 ? wc_price( $var_cost ) : 'No cost entered'; ?>
+                                        </td>
+                                        <td><?php echo esc_html( $var_margin ); ?></td>
+                                        <td><?php echo esc_html( $var_stock ); ?></td>
+                                    </tr>
+                                    <?php
+                                }
+                            }
+                        }
+                    }
+                    ?>
+                </tbody>
+            </table>
+        </div>
+        <?php
     }
 
     /** ============= RECALCULATION ============= */
