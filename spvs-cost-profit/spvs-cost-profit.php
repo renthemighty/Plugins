@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.20
+ * Version: 1.6.0
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1145,100 +1145,76 @@ final class SPVS_Cost_Profit {
 
     /** ---------------- Order Profit Recalculation (Batch) ---------------- */
     public function ajax_recalc_orders_batch() {
-        // Log for debugging
-        error_log( 'SPVS Recalc: Starting batch processing' );
-
         check_ajax_referer( 'spvs_recalc_orders', 'nonce' );
 
         if ( ! current_user_can( 'manage_woocommerce' ) ) {
-            error_log( 'SPVS Recalc: Permission denied' );
             wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
         }
 
+        global $wpdb;
+
         $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
-        $batch_size = 20; // Process 20 orders at a time
+        $batch_size = 20;
         $is_first_batch = ( $offset === 0 );
 
-        error_log( 'SPVS Recalc: Offset=' . $offset . ', First batch=' . ( $is_first_batch ? 'yes' : 'no' ) );
-
-        // Get date range from request
+        // Get date range
         $start_date = isset( $_POST['start_date'] ) ? sanitize_text_field( $_POST['start_date'] ) : '';
         $end_date = isset( $_POST['end_date'] ) ? sanitize_text_field( $_POST['end_date'] ) : '';
 
-        // Build order query args with date filter
-        $order_args = array(
-            'status'  => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
-            'orderby' => 'date',
-            'order'   => 'ASC',
-            'limit'   => -1,
-            'return'  => 'ids',
-        );
-
-        // Add date range filter if provided
-        if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
-            // Use WooCommerce date range format: start...end
-            $order_args['date_created'] = $start_date . '...' . $end_date;
-        }
-
-        // Get total count and cache order IDs for subsequent batches
+        // Get total count and cache for subsequent batches
         if ( $is_first_batch ) {
-            error_log( 'SPVS Recalc: Querying orders with args: ' . print_r( $order_args, true ) );
-            $all_order_ids = wc_get_orders( $order_args );
-            error_log( 'SPVS Recalc: Query returned type: ' . gettype( $all_order_ids ) );
+            // Direct database query - much more reliable
+            $where = "post_type = 'shop_order' AND post_status IN ('wc-completed', 'wc-processing')";
 
-            if ( ! is_array( $all_order_ids ) ) {
-                error_log( 'SPVS Recalc: wc_get_orders did not return an array' );
-                $all_order_ids = array();
+            if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
+                $start_datetime = $start_date . ' 00:00:00';
+                $end_datetime = $end_date . ' 23:59:59';
+                $where .= $wpdb->prepare( " AND post_date >= %s AND post_date <= %s", $start_datetime, $end_datetime );
             }
+
+            $query = "SELECT ID FROM {$wpdb->posts} WHERE {$where} ORDER BY ID ASC";
+            $all_order_ids = $wpdb->get_col( $query );
             $total = count( $all_order_ids );
-            error_log( 'SPVS Recalc: Found ' . $total . ' orders' );
 
             if ( $total <= 0 ) {
-                error_log( 'SPVS Recalc: No orders found, sending error' );
                 wp_send_json_error( array(
-                    'message' => 'No orders found in the selected date range (' . $start_date . ' to ' . $end_date . '). Please check the dates and try again.'
+                    'message' => 'No orders found between ' . $start_date . ' and ' . $end_date . '. Found ' . $total . ' orders.'
                 ) );
             }
 
-            // Cache both total and order IDs
-            set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
+            // Cache order IDs
             set_transient( 'spvs_recalc_order_ids', $all_order_ids, HOUR_IN_SECONDS );
-            error_log( 'SPVS Recalc: Cached total and IDs' );
+            set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
         } else {
-            $total = (int) get_transient( 'spvs_recalc_total' );
             $all_order_ids = get_transient( 'spvs_recalc_order_ids' );
-            error_log( 'SPVS Recalc: Retrieved from cache - total: ' . $total . ', IDs count: ' . ( is_array( $all_order_ids ) ? count( $all_order_ids ) : 'not array' ) );
+            $total = (int) get_transient( 'spvs_recalc_total' );
 
-            if ( ! $total || ! is_array( $all_order_ids ) ) {
-                error_log( 'SPVS Recalc: Cache expired or invalid' );
-                wp_send_json_error( array( 'message' => 'Session expired. Please refresh and try again.' ) );
+            if ( ! $all_order_ids || ! $total ) {
+                wp_send_json_error( array( 'message' => 'Session expired. Please try again.' ) );
             }
         }
 
-        // Slice the array to get current batch
+        // Get batch
         $batch_ids = array_slice( $all_order_ids, $offset, $batch_size );
-
         $recalculated = 0;
+
         foreach ( $batch_ids as $order_id ) {
             $order = wc_get_order( $order_id );
-            if ( ! $order instanceof WC_Order ) continue;
+            if ( ! $order ) continue;
 
-            // Force recalculation by removing stored profit
-            $order->delete_meta_data( self::ORDER_TOTAL_PROFIT_META );
-            $order->save_meta_data();
-
-            // Recalculate with current costs
+            // Recalculate profit
+            delete_post_meta( $order_id, self::ORDER_TOTAL_PROFIT_META );
             $this->recalculate_order_total_profit( $order );
             $recalculated++;
         }
 
         $processed = $offset + $recalculated;
-        $is_complete = ( $processed >= $total || empty( $batch_ids ) );
+        $is_complete = ( $processed >= $total );
 
-        // Clean up transients on completion
+        // Cleanup
         if ( $is_complete ) {
-            delete_transient( 'spvs_recalc_total' );
             delete_transient( 'spvs_recalc_order_ids' );
+            delete_transient( 'spvs_recalc_total' );
         }
 
         wp_send_json_success( array(
@@ -1246,7 +1222,13 @@ final class SPVS_Cost_Profit {
             'total'        => $total,
             'recalculated' => $recalculated,
             'complete'     => $is_complete,
-            'percentage'   => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100
+            'percentage'   => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100,
+            'debug'        => array(
+                'start_date' => $start_date,
+                'end_date'   => $end_date,
+                'offset'     => $offset,
+                'batch_size' => $batch_size,
+            )
         ) );
     }
 
