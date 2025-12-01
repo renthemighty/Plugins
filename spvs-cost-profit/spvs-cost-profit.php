@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.7
+ * Version: 1.5.8
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1127,41 +1127,52 @@ final class SPVS_Cost_Profit {
         $batch_size = 20; // Process 20 orders at a time
         $is_first_batch = ( $offset === 0 );
 
+        // Get date range from request
+        $start_date = isset( $_POST['start_date'] ) ? sanitize_text_field( $_POST['start_date'] ) : '';
+        $end_date = isset( $_POST['end_date'] ) ? sanitize_text_field( $_POST['end_date'] ) : '';
+
+        // Build order query args with date filter
+        $order_args = array(
+            'status'  => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
+            'orderby' => 'ID',
+            'order'   => 'ASC',
+        );
+
+        // Add date range filter if provided
+        if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
+            $order_args['date_created'] = $start_date . '...' . $end_date;
+        }
+
         // Get total count (cache it for subsequent batches)
         if ( $is_first_batch ) {
             // Count orders using wc_get_orders with limit=-1 and return=ids
-            $all_order_ids = wc_get_orders( array(
-                'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
-                'limit'  => -1,
-                'return' => 'ids',
-            ) );
+            $count_args = $order_args;
+            $count_args['limit'] = -1;
+            $count_args['return'] = 'ids';
+            $all_order_ids = wc_get_orders( $count_args );
             $total = count( $all_order_ids );
             set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
         } else {
             $total = (int) get_transient( 'spvs_recalc_total' );
             if ( ! $total ) {
                 // Recalculate if transient expired
-                $all_order_ids = wc_get_orders( array(
-                    'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
-                    'limit'  => -1,
-                    'return' => 'ids',
-                ) );
+                $count_args = $order_args;
+                $count_args['limit'] = -1;
+                $count_args['return'] = 'ids';
+                $all_order_ids = wc_get_orders( $count_args );
                 $total = count( $all_order_ids );
             }
         }
 
         if ( $total <= 0 ) {
-            wp_send_json_error( array( 'message' => 'No orders found to recalculate' ) );
+            wp_send_json_error( array( 'message' => 'No orders found in the selected date range' ) );
         }
 
         // Get batch of orders
-        $orders = wc_get_orders( array(
-            'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
-            'limit'  => $batch_size,
-            'offset' => $offset,
-            'orderby' => 'ID',
-            'order'   => 'ASC',
-        ) );
+        $batch_args = $order_args;
+        $batch_args['limit'] = $batch_size;
+        $batch_args['offset'] = $offset;
+        $orders = wc_get_orders( $batch_args );
 
         $recalculated = 0;
         foreach ( $orders as $order ) {
@@ -1483,9 +1494,10 @@ final class SPVS_Cost_Profit {
 
         // Recalculate All Orders button
         echo '<div style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc;">';
-        echo '<h3 style="margin-top:0;">' . esc_html__( 'Recalculate Historical Profit', 'spvs-cost-profit' ) . '</h3>';
-        echo '<p>' . esc_html__( 'If you imported costs after orders were placed, use this to recalculate profit for all historical orders using current cost data.', 'spvs-cost-profit' ) . '</p>';
-        echo '<button type="button" id="spvs-recalc-orders-btn" class="button button-secondary">' . esc_html__( '🔄 Recalculate All Orders', 'spvs-cost-profit' ) . '</button>';
+        echo '<h3 style="margin-top:0;">' . esc_html__( 'Recalculate Profit for Report Period', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p>' . esc_html__( 'Recalculate profit for orders in the selected date range using current cost data.', 'spvs-cost-profit' ) . '</p>';
+        echo '<button type="button" id="spvs-recalc-orders-btn" class="button button-secondary" data-start-date="' . esc_attr( $start_date ) . '" data-end-date="' . esc_attr( $end_date ) . '">' . esc_html__( '🔄 Recalculate Orders', 'spvs-cost-profit' ) . '</button>';
+        echo ' <span style="color:#666; font-size:12px;">' . sprintf( esc_html__( '(%s to %s)', 'spvs-cost-profit' ), $start_date, $end_date ) . '</span>';
         echo '</div>';
 
         if ( empty( $monthly_data ) ) {
