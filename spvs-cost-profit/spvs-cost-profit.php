@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.7.3
+ * Version: 1.7.5
  * Author: Megatron
  * License: GPL-2.0+
  */
@@ -40,8 +40,9 @@ final class SPVS_Cost_Profit_V2 {
         add_action( 'admin_menu', array( $this, 'add_menu_pages' ) );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
 
-        // Recalculation handler
+        // Recalculation handlers
         add_action( 'admin_post_spvs_recalculate_all', array( $this, 'handle_recalculate_all' ) );
+        add_action( 'wp_ajax_spvs_batch_recalculate', array( $this, 'ajax_batch_recalculate' ) );
     }
 
     /** ============= PRODUCT COST FIELDS ============= */
@@ -184,6 +185,12 @@ final class SPVS_Cost_Profit_V2 {
                 </div>
             <?php endif; ?>
 
+            <?php if ( isset( $_GET['batch_success'] ) ) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p><strong>✅ Batch Recalculation Complete!</strong> All orders have been successfully processed.</p>
+                </div>
+            <?php endif; ?>
+
             <!-- Quick Date Shortcuts -->
             <div class="card" style="padding: 20px; margin: 20px 0;">
                 <h2>📅 Quick Select</h2>
@@ -215,17 +222,109 @@ final class SPVS_Cost_Profit_V2 {
             </div>
 
             <!-- Recalculation Tool -->
-            <div class="card" style="max-width: 800px; padding: 20px; margin: 20px 0; background: #f0f6fc;">
+            <div class="card" style="max-width: 1000px; padding: 20px; margin: 20px 0; background: #f0f6fc;">
                 <h2>🔄 Recalculate All Orders</h2>
-                <p>Click below to recalculate profit for ALL orders using current product costs. This will update historical data.</p>
-                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('This will recalculate ALL orders. Continue?');">
-                    <input type="hidden" name="action" value="spvs_recalculate_all">
-                    <?php wp_nonce_field( 'spvs_recalculate_all' ); ?>
-                    <button type="submit" class="button button-secondary" style="background: #2271b1; color: white; border-color: #2271b1;">
-                        🔄 Recalculate All Orders Now
+                <p>Recalculate profit for ALL orders using current product costs. This will update historical data.</p>
+
+                <div style="display: flex; gap: 15px; margin-top: 15px; flex-wrap: wrap;">
+                    <!-- Quick Recalculate (for small stores) -->
+                    <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" onsubmit="return confirm('This will recalculate ALL orders at once. For large stores, use Batch Recalculate instead. Continue?');">
+                        <input type="hidden" name="action" value="spvs_recalculate_all">
+                        <?php wp_nonce_field( 'spvs_recalculate_all' ); ?>
+                        <button type="submit" class="button">
+                            ⚡ Quick Recalculate (Small Stores)
+                        </button>
+                    </form>
+
+                    <!-- Batch Recalculate (for large stores) -->
+                    <button type="button" id="spvs-batch-recalc-btn" class="button button-primary" style="background: #2271b1; color: white; border-color: #2271b1;">
+                        🔄 Batch Recalculate (Large Stores - Recommended)
                     </button>
-                </form>
+                </div>
+
+                <!-- Progress Bar -->
+                <div id="spvs-batch-progress" style="display: none; margin-top: 20px;">
+                    <div style="background: #fff; border: 1px solid #ccc; border-radius: 4px; overflow: hidden; height: 30px; margin-bottom: 10px;">
+                        <div id="spvs-progress-bar" style="background: linear-gradient(90deg, #2271b1, #00a32a); height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold; font-size: 12px;"></div>
+                    </div>
+                    <p id="spvs-progress-message" style="margin: 0; font-weight: bold;"></p>
+                </div>
             </div>
+
+            <script>
+            jQuery(document).ready(function($) {
+                let processing = false;
+
+                $('#spvs-batch-recalc-btn').on('click', function() {
+                    if (processing) {
+                        alert('Batch recalculation is already in progress.');
+                        return;
+                    }
+
+                    if (!confirm('This will recalculate ALL orders in batches of 50. This is safe for large stores and prevents server overload. Continue?')) {
+                        return;
+                    }
+
+                    processing = true;
+                    $('#spvs-batch-recalc-btn').prop('disabled', true).text('⏳ Processing...');
+                    $('#spvs-batch-progress').show();
+
+                    processBatch(0, 0);
+                });
+
+                function processBatch(offset, total) {
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'spvs_batch_recalculate',
+                            nonce: '<?php echo wp_create_nonce( 'spvs_batch_recalc' ); ?>',
+                            offset: offset,
+                            total: total
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                const data = response.data;
+
+                                if (data.complete) {
+                                    // Completed
+                                    $('#spvs-progress-bar').css('width', '100%').text('100%');
+                                    $('#spvs-progress-message').html('✅ <strong>Complete!</strong> Processed ' + data.total + ' orders. Reloading page...');
+
+                                    setTimeout(function() {
+                                        window.location.href = '<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'batch_success' => 1 ), admin_url( 'admin.php' ) ) ); ?>';
+                                    }, 2000);
+                                } else {
+                                    // Update progress and continue
+                                    $('#spvs-progress-bar').css('width', data.percentage + '%').text(data.percentage + '%');
+                                    $('#spvs-progress-message').text(data.message);
+
+                                    // Wait 500ms before next batch (rate limiting)
+                                    setTimeout(function() {
+                                        processBatch(data.processed, data.total);
+                                    }, 500);
+                                }
+                            } else {
+                                alert('Error: ' + (response.data ? response.data.message : 'Unknown error'));
+                                resetUI();
+                            }
+                        },
+                        error: function() {
+                            alert('AJAX error occurred. Please try again.');
+                            resetUI();
+                        }
+                    });
+                }
+
+                function resetUI() {
+                    processing = false;
+                    $('#spvs-batch-recalc-btn').prop('disabled', false).html('🔄 Batch Recalculate (Large Stores - Recommended)');
+                    $('#spvs-batch-progress').hide();
+                    $('#spvs-progress-bar').css('width', '0%').text('');
+                    $('#spvs-progress-message').text('');
+                }
+            });
+            </script>
 
             <?php if ( empty( $data ) ) : ?>
                 <div class="notice notice-warning">
@@ -399,8 +498,18 @@ final class SPVS_Cost_Profit_V2 {
             }
 
             // Get STORED cost and profit from meta (pre-calculated for efficiency)
-            $cost = (float) get_post_meta( $order_id, self::ORDER_COST_META, true );
-            $profit = (float) get_post_meta( $order_id, self::ORDER_PROFIT_META, true );
+            $cost = get_post_meta( $order_id, self::ORDER_COST_META, true );
+            $profit = get_post_meta( $order_id, self::ORDER_PROFIT_META, true );
+
+            // LAZY CALCULATION: If data doesn't exist, calculate and store it now
+            if ( $cost === '' || $profit === '' ) {
+                $this->calculate_order_profit( $order );
+                $cost = get_post_meta( $order_id, self::ORDER_COST_META, true );
+                $profit = get_post_meta( $order_id, self::ORDER_PROFIT_META, true );
+            }
+
+            $cost = (float) $cost;
+            $profit = (float) $profit;
 
             // Initialize day if not exists
             if ( ! isset( $daily_data[ $date ] ) ) {
@@ -475,6 +584,67 @@ final class SPVS_Cost_Profit_V2 {
             'total' => $total,
         ), admin_url( 'admin.php' ) ) );
         exit;
+    }
+
+    /** ============= BATCH RECALCULATION WITH RATE LIMITING ============= */
+
+    public function ajax_batch_recalculate() {
+        check_ajax_referer( 'spvs_batch_recalc', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
+        }
+
+        global $wpdb;
+
+        $offset = isset( $_POST['offset'] ) ? absint( $_POST['offset'] ) : 0;
+        $batch_size = 50; // Process 50 orders at a time to avoid overload
+
+        // Get total count on first batch
+        if ( $offset === 0 ) {
+            $total = $wpdb->get_var( "
+                SELECT COUNT(ID) FROM {$wpdb->posts}
+                WHERE post_type = 'shop_order'
+                AND post_status IN ('wc-completed', 'wc-processing')
+            " );
+        } else {
+            $total = isset( $_POST['total'] ) ? absint( $_POST['total'] ) : 0;
+        }
+
+        // Get batch of order IDs
+        $order_ids = $wpdb->get_col( $wpdb->prepare( "
+            SELECT ID FROM {$wpdb->posts}
+            WHERE post_type = 'shop_order'
+            AND post_status IN ('wc-completed', 'wc-processing')
+            ORDER BY ID ASC
+            LIMIT %d OFFSET %d
+        ", $batch_size, $offset ) );
+
+        if ( empty( $order_ids ) ) {
+            wp_send_json_success( array(
+                'complete' => true,
+                'message' => 'All orders processed!',
+                'total' => $total,
+            ) );
+        }
+
+        // Process this batch
+        foreach ( $order_ids as $order_id ) {
+            delete_post_meta( $order_id, self::ORDER_COST_META );
+            delete_post_meta( $order_id, self::ORDER_PROFIT_META );
+            $this->calculate_order_profit( $order_id );
+        }
+
+        $processed = $offset + count( $order_ids );
+        $percentage = $total > 0 ? round( ( $processed / $total ) * 100 ) : 0;
+
+        wp_send_json_success( array(
+            'complete' => false,
+            'processed' => $processed,
+            'total' => $total,
+            'percentage' => $percentage,
+            'message' => sprintf( 'Processed %d of %d orders (%d%%)', $processed, $total, $percentage ),
+        ) );
     }
 }
 
