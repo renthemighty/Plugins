@@ -78,6 +78,16 @@ jQuery(document).ready(function($) {
 
     // Reload page when complete button is clicked
     $(document).on('click', '#spvs-recalc-complete-btn', function() {
-        window.location.href = window.location.href.split('?')[0] + '?page=spvs-profit-reports&spvs_recalc_done=' + totalRecalculated;
+        // Preserve date range parameters when reloading
+        var urlParams = new URLSearchParams(window.location.search);
+        var startDate = urlParams.get('start_date') || '';
+        var endDate = urlParams.get('end_date') || '';
+
+        var reloadUrl = window.location.href.split('?')[0] + '?page=spvs-profit-reports';
+        if (startDate) reloadUrl += '&start_date=' + encodeURIComponent(startDate);
+        if (endDate) reloadUrl += '&end_date=' + encodeURIComponent(endDate);
+        reloadUrl += '&spvs_recalc_done=' + totalRecalculated;
+
+        window.location.href = reloadUrl;
     });
 });
