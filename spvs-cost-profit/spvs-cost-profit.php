@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.7.2
+ * Version: 1.7.3
  * Author: Megatron
  * License: GPL-2.0+
  */
@@ -15,6 +15,7 @@ final class SPVS_Cost_Profit_V2 {
 
     const PRODUCT_COST_META = '_spvs_cost_price';
     const ORDER_PROFIT_META = '_spvs_total_profit';
+    const ORDER_COST_META = '_spvs_total_cost';
 
     public static function instance() {
         if ( is_null( self::$instance ) ) {
@@ -104,6 +105,7 @@ final class SPVS_Cost_Profit_V2 {
         }
 
         $total_profit = 0;
+        $total_cost = 0;
 
         foreach ( $order->get_items( 'line_item' ) as $item ) {
             $product = $item->get_product();
@@ -117,14 +119,16 @@ final class SPVS_Cost_Profit_V2 {
 
             // Get cost
             $unit_cost = $this->get_product_cost( $product_id );
-            $total_cost = $unit_cost * $quantity;
+            $line_cost = $unit_cost * $quantity;
+            $total_cost += $line_cost;
 
             // Calculate line profit
-            $line_profit = $line_total - $total_cost;
+            $line_profit = $line_total - $line_cost;
             $total_profit += $line_profit;
         }
 
-        // Save to order meta
+        // Save BOTH cost and profit to order meta for efficient reporting
+        update_post_meta( $order->get_id(), self::ORDER_COST_META, wc_format_decimal( $total_cost, 2 ) );
         update_post_meta( $order->get_id(), self::ORDER_PROFIT_META, wc_format_decimal( $total_profit, 2 ) );
 
         return $total_profit;
@@ -388,21 +392,14 @@ final class SPVS_Cost_Profit_V2 {
 
             $date = $order->get_date_created()->format( 'Y-m-d' );
 
-            // Calculate revenue and cost
+            // Calculate revenue from order items
             $revenue = 0;
-            $cost = 0;
             foreach ( $order->get_items() as $item ) {
                 $revenue += (float) $item->get_total();
-
-                // Calculate cost for this line item
-                $product = $item->get_product();
-                if ( $product ) {
-                    $unit_cost = $this->get_product_cost( $product->get_id() );
-                    $cost += $unit_cost * $item->get_quantity();
-                }
             }
 
-            // Get profit from meta
+            // Get STORED cost and profit from meta (pre-calculated for efficiency)
+            $cost = (float) get_post_meta( $order_id, self::ORDER_COST_META, true );
             $profit = (float) get_post_meta( $order_id, self::ORDER_PROFIT_META, true );
 
             // Initialize day if not exists
@@ -466,6 +463,7 @@ final class SPVS_Cost_Profit_V2 {
 
         // Recalculate each order
         foreach ( $order_ids as $order_id ) {
+            delete_post_meta( $order_id, self::ORDER_COST_META );
             delete_post_meta( $order_id, self::ORDER_PROFIT_META );
             $this->calculate_order_profit( $order_id );
         }
