@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.15
+ * Version: 1.5.16
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1162,48 +1162,56 @@ final class SPVS_Cost_Profit {
         // Build order query args with date filter
         $order_args = array(
             'status'  => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
-            'orderby' => 'ID',
+            'orderby' => 'date',
             'order'   => 'ASC',
+            'limit'   => -1,
+            'return'  => 'ids',
         );
 
-        // Add date range filter if provided
+        // Add date range filter if provided - use proper format
         if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
-            $order_args['date_created'] = $start_date . '...' . $end_date;
+            // Convert to timestamps for more reliable filtering
+            $start_timestamp = strtotime( $start_date . ' 00:00:00' );
+            $end_timestamp = strtotime( $end_date . ' 23:59:59' );
+
+            if ( $start_timestamp && $end_timestamp ) {
+                $order_args['date_created'] = '>' . $start_timestamp;
+                $order_args['date_before'] = date( 'Y-m-d H:i:s', $end_timestamp );
+                $order_args['date_after'] = date( 'Y-m-d H:i:s', $start_timestamp );
+            }
         }
 
         // Get total count (cache it for subsequent batches)
         if ( $is_first_batch ) {
-            // Count orders using wc_get_orders with limit=-1 and return=ids
-            $count_args = $order_args;
-            $count_args['limit'] = -1;
-            $count_args['return'] = 'ids';
-            $all_order_ids = wc_get_orders( $count_args );
-            $total = count( $all_order_ids );
+            $all_order_ids = wc_get_orders( $order_args );
+            $total = is_array( $all_order_ids ) ? count( $all_order_ids ) : 0;
+
+            if ( $total <= 0 ) {
+                wp_send_json_error( array(
+                    'message' => 'No orders found in the selected date range (' . $start_date . ' to ' . $end_date . '). Please check the dates and try again.'
+                ) );
+            }
+
             set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
         } else {
             $total = (int) get_transient( 'spvs_recalc_total' );
             if ( ! $total ) {
-                // Recalculate if transient expired
-                $count_args = $order_args;
-                $count_args['limit'] = -1;
-                $count_args['return'] = 'ids';
-                $all_order_ids = wc_get_orders( $count_args );
-                $total = count( $all_order_ids );
+                wp_send_json_error( array( 'message' => 'Session expired. Please refresh and try again.' ) );
             }
         }
 
-        if ( $total <= 0 ) {
-            wp_send_json_error( array( 'message' => 'No orders found in the selected date range' ) );
+        // Get batch of order IDs to process
+        $all_order_ids = wc_get_orders( $order_args );
+        if ( ! is_array( $all_order_ids ) ) {
+            $all_order_ids = array();
         }
 
-        // Get batch of orders
-        $batch_args = $order_args;
-        $batch_args['limit'] = $batch_size;
-        $batch_args['offset'] = $offset;
-        $orders = wc_get_orders( $batch_args );
+        // Slice the array to get current batch
+        $batch_ids = array_slice( $all_order_ids, $offset, $batch_size );
 
         $recalculated = 0;
-        foreach ( $orders as $order ) {
+        foreach ( $batch_ids as $order_id ) {
+            $order = wc_get_order( $order_id );
             if ( ! $order instanceof WC_Order ) continue;
 
             // Force recalculation by removing stored profit
@@ -1216,7 +1224,7 @@ final class SPVS_Cost_Profit {
         }
 
         $processed = $offset + $recalculated;
-        $is_complete = ( $processed >= $total || empty( $orders ) );
+        $is_complete = ( $processed >= $total || empty( $batch_ids ) );
 
         // Clean up transient on completion
         if ( $is_complete ) {
