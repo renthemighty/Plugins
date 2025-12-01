@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.0
+ * Version: 1.5.3
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -31,6 +31,12 @@ final class SPVS_Cost_Profit {
 
     // Import diagnostics
     const IMPORT_MISSES_TRANSIENT   = 'spvs_cost_import_misses';
+
+    // Data backup & protection
+    const BACKUP_OPTION_PREFIX      = 'spvs_cost_backup_';
+    const BACKUP_LATEST_OPTION      = 'spvs_cost_backup_latest';
+    const BACKUP_COUNT_OPTION       = 'spvs_cost_backup_count';
+    const MAX_BACKUPS               = 2; // Keep 2 days of backups
 
     private static $instance = null;
 
@@ -98,6 +104,20 @@ final class SPVS_Cost_Profit {
         add_action( 'init', array( $this, 'maybe_schedule_daily_cron' ) );
         add_action( 'spvs_daily_inventory_recalc', array( $this, 'recalculate_inventory_totals' ) );
 
+        /** Data backup & protection */
+        add_action( 'init', array( $this, 'maybe_schedule_backup_cron' ) );
+        add_action( 'spvs_daily_cost_backup', array( $this, 'create_cost_data_backup' ) );
+        add_action( 'admin_post_spvs_backup_costs_now', array( $this, 'handle_manual_backup' ) );
+        add_action( 'admin_post_spvs_restore_costs', array( $this, 'handle_restore_costs' ) );
+        add_action( 'admin_post_spvs_export_backup', array( $this, 'export_backup_data' ) );
+
+        /** Cost of Goods import */
+        add_action( 'admin_post_spvs_import_from_cog', array( $this, 'import_from_cost_of_goods' ) );
+        add_action( 'wp_ajax_spvs_cog_import_batch', array( $this, 'ajax_import_cog_batch' ) );
+
+        /** Order profit recalculation */
+        add_action( 'wp_ajax_spvs_recalc_orders_batch', array( $this, 'ajax_recalc_orders_batch' ) );
+
         /** Dedicated admin pages under WooCommerce */
         add_action( 'admin_menu', array( $this, 'register_admin_pages' ) );
 
@@ -110,7 +130,105 @@ final class SPVS_Cost_Profit {
         if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook ) {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
+
+            // Add inline CSS for progress modals
+            wp_add_inline_style( 'wp-admin', $this->get_progress_modal_css() );
         }
+
+        if ( 'woocommerce_page_spvs-inventory' === $hook ) {
+            // Enqueue import progress modal script
+            wp_enqueue_script( 'spvs-cog-import', plugins_url( 'js/cog-import.js', __FILE__ ), array( 'jquery' ), '1.5.3', true );
+            wp_localize_script( 'spvs-cog-import', 'spvsCogImport', array(
+                'ajaxurl' => admin_url( 'admin-ajax.php' ),
+                'nonce' => wp_create_nonce( 'spvs_cog_import' ),
+            ) );
+        }
+
+        if ( 'woocommerce_page_spvs-profit-reports' === $hook ) {
+            // Enqueue order recalculation progress modal script
+            wp_enqueue_script( 'spvs-order-recalc', plugins_url( 'js/order-recalc.js', __FILE__ ), array( 'jquery' ), '1.5.3', true );
+            wp_localize_script( 'spvs-order-recalc', 'spvsRecalcOrders', array(
+                'ajaxurl' => admin_url( 'admin-ajax.php' ),
+                'nonce' => wp_create_nonce( 'spvs_recalc_orders' ),
+            ) );
+        }
+    }
+
+    private function get_progress_modal_css() {
+        return '
+            #spvs-import-modal, #spvs-recalc-modal {
+                display: none;
+                position: fixed;
+                z-index: 100000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.7);
+            }
+            #spvs-import-modal-content, #spvs-recalc-modal-content {
+                background-color: #fff;
+                margin: 10% auto;
+                padding: 30px;
+                border-radius: 8px;
+                width: 90%;
+                max-width: 600px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            }
+            #spvs-import-modal h2, #spvs-recalc-modal h2 {
+                margin-top: 0;
+                color: #2271b1;
+            }
+            #spvs-progress-bar-container, #spvs-recalc-progress-bar-container {
+                width: 100%;
+                background-color: #e0e0e0;
+                border-radius: 10px;
+                height: 30px;
+                margin: 20px 0;
+                overflow: hidden;
+            }
+            #spvs-progress-bar, #spvs-recalc-progress-bar {
+                height: 100%;
+                background: linear-gradient(90deg, #00a32a 0%, #00ba37 100%);
+                width: 0%;
+                transition: width 0.3s ease;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            #spvs-progress-status, #spvs-recalc-progress-status {
+                text-align: center;
+                margin: 15px 0;
+                font-size: 16px;
+                color: #333;
+            }
+            #spvs-progress-details {
+                background: #f0f0f0;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 15px 0;
+                font-family: monospace;
+                font-size: 13px;
+            }
+            #spvs-progress-details div {
+                margin: 5px 0;
+            }
+            .spvs-progress-label {
+                font-weight: bold;
+                display: inline-block;
+                width: 120px;
+            }
+            #spvs-import-complete-btn {
+                display: none;
+                margin-top: 20px;
+                width: 100%;
+                padding: 12px;
+                font-size: 16px;
+            }
+        ';
     }
 
     /** ---------------- Product admin ---------------- */
@@ -337,7 +455,7 @@ final class SPVS_Cost_Profit {
 
         $batch_size = 250; $paged = 1;
         $tcop_total = 0.0; $retail_total = 0.0;
-        $processed = 0; $managed = 0; $qty_gt0 = 0;
+        $processed = 0; $managed = 0; $qty_gt0 = 0; $with_cost = 0;
 
         while ( true ) {
             $q = new WP_Query( array(
@@ -354,13 +472,29 @@ final class SPVS_Cost_Profit {
                 $product = wc_get_product( $pid ); if ( ! $product ) continue;
                 $processed++;
 
-                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 0;
-                if ( $product->managing_stock() ) $managed++;
-                if ( $qty > 0 ) $qty_gt0++;
-
-                if ( $qty <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
-
+                // Get unit cost - if no cost set, skip this product
                 $unit_cost = (float) $this->get_product_cost( $pid );
+                if ( $unit_cost <= 0 ) {
+                    delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                    delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                    continue;
+                }
+
+                $with_cost++;
+
+                // Get quantity - use stock quantity if managed, otherwise default to 1 for valuation
+                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 1;
+                if ( $product->managing_stock() ) {
+                    $managed++;
+                    if ( $qty > 0 ) $qty_gt0++;
+                    // If stock managed but qty is 0, skip from totals
+                    if ( $qty <= 0 ) {
+                        delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                        delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                        continue;
+                    }
+                }
+
                 $reg_price = (float) $product->get_regular_price();
                 $line_cost   = $unit_cost * $qty;
                 $line_retail = $reg_price * $qty;
@@ -376,13 +510,225 @@ final class SPVS_Cost_Profit {
         }
 
         update_option( self::INVENTORY_TOTALS_OPTION, array(
-            'tcop'    => wc_format_decimal( $tcop_total, wc_get_price_decimals() ),
-            'retail'  => wc_format_decimal( $retail_total, wc_get_price_decimals() ),
-            'count'   => (int) $processed,
-            'managed' => (int) $managed,
-            'qty_gt0' => (int) $qty_gt0,
-            'updated' => time(),
+            'tcop'      => wc_format_decimal( $tcop_total, wc_get_price_decimals() ),
+            'retail'    => wc_format_decimal( $retail_total, wc_get_price_decimals() ),
+            'count'     => (int) $processed,
+            'managed'   => (int) $managed,
+            'qty_gt0'   => (int) $qty_gt0,
+            'with_cost' => (int) $with_cost,
+            'updated'   => time(),
         ), false );
+    }
+
+    /** ---------------- Data Backup & Protection ---------------- */
+    public function maybe_schedule_backup_cron() {
+        if ( ! wp_next_scheduled( 'spvs_daily_cost_backup' ) ) {
+            $timestamp = strtotime( '03:00:00' ); // 3 AM daily
+            if ( ! $timestamp || $timestamp <= time() ) $timestamp = time() + HOUR_IN_SECONDS;
+            wp_schedule_event( $timestamp, 'daily', 'spvs_daily_cost_backup' );
+        }
+    }
+
+    public function create_cost_data_backup() {
+        global $wpdb;
+
+        // Get all cost data in batches to reduce server load
+        $batch_size = 100;
+        $offset = 0;
+        $all_costs = array();
+
+        while ( true ) {
+            $costs_batch = $wpdb->get_results( $wpdb->prepare( "
+                SELECT pm.post_id, pm.meta_value as cost
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = %s
+                AND p.post_type IN ('product', 'product_variation')
+                AND p.post_status = 'publish'
+                LIMIT %d OFFSET %d
+            ", self::PRODUCT_COST_META, $batch_size, $offset ), ARRAY_A );
+
+            if ( empty( $costs_batch ) ) {
+                break; // No more results
+            }
+
+            $all_costs = array_merge( $all_costs, $costs_batch );
+            $offset += $batch_size;
+
+            // Throttle: small delay between batches to reduce server load
+            if ( count( $costs_batch ) === $batch_size ) {
+                usleep( 100000 ); // 0.1 second delay between batches
+            }
+        }
+
+        if ( empty( $all_costs ) ) return false;
+
+        // Create backup with timestamp
+        $backup_key = self::BACKUP_OPTION_PREFIX . date( 'Y_m_d_H_i_s' );
+        $backup_data = array(
+            'timestamp' => time(),
+            'count'     => count( $all_costs ),
+            'data'      => $all_costs,
+            'version'   => '1.4.8'
+        );
+
+        // Save backup
+        update_option( $backup_key, $backup_data, false );
+
+        // Update latest backup pointer
+        update_option( self::BACKUP_LATEST_OPTION, $backup_key, false );
+
+        // Rotate old backups (keep only MAX_BACKUPS)
+        $this->rotate_old_backups();
+
+        return $backup_key;
+    }
+
+    private function rotate_old_backups() {
+        global $wpdb;
+
+        // Get all backup options
+        $backups = $wpdb->get_results( $wpdb->prepare(
+            "SELECT option_name FROM {$wpdb->options}
+            WHERE option_name LIKE %s
+            ORDER BY option_name DESC",
+            $wpdb->esc_like( self::BACKUP_OPTION_PREFIX ) . '%'
+        ), ARRAY_A );
+
+        // Delete old backups beyond MAX_BACKUPS
+        if ( count( $backups ) > self::MAX_BACKUPS ) {
+            $to_delete = array_slice( $backups, self::MAX_BACKUPS );
+            foreach ( $to_delete as $backup ) {
+                delete_option( $backup['option_name'] );
+            }
+        }
+
+        // Update count
+        update_option( self::BACKUP_COUNT_OPTION, count( $backups ), false );
+    }
+
+    public function get_available_backups() {
+        global $wpdb;
+
+        $backups = $wpdb->get_results( $wpdb->prepare(
+            "SELECT option_name, option_value FROM {$wpdb->options}
+            WHERE option_name LIKE %s
+            ORDER BY option_name DESC",
+            $wpdb->esc_like( self::BACKUP_OPTION_PREFIX ) . '%'
+        ), ARRAY_A );
+
+        $formatted = array();
+        foreach ( $backups as $backup ) {
+            $data = maybe_unserialize( $backup['option_value'] );
+            if ( is_array( $data ) && isset( $data['timestamp'] ) ) {
+                $formatted[] = array(
+                    'key'       => $backup['option_name'],
+                    'timestamp' => $data['timestamp'],
+                    'count'     => isset( $data['count'] ) ? $data['count'] : 0,
+                    'date'      => date( 'Y-m-d H:i:s', $data['timestamp'] ),
+                    'age'       => human_time_diff( $data['timestamp'], time() ) . ' ago'
+                );
+            }
+        }
+
+        return $formatted;
+    }
+
+    public function handle_manual_backup() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_backup_costs_now' );
+
+        $backup_key = $this->create_cost_data_backup();
+
+        if ( $backup_key ) {
+            $redirect = add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'backup_created'
+            ), admin_url( 'admin.php' ) );
+        } else {
+            $redirect = add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'backup_failed'
+            ), admin_url( 'admin.php' ) );
+        }
+
+        wp_safe_redirect( $redirect );
+        exit;
+    }
+
+    public function handle_restore_costs() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_restore_costs' );
+
+        $backup_key = isset( $_POST['backup_key'] ) ? sanitize_text_field( $_POST['backup_key'] ) : '';
+
+        if ( empty( $backup_key ) ) {
+            wp_safe_redirect( add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'restore_no_backup'
+            ), admin_url( 'admin.php' ) ) );
+            exit;
+        }
+
+        // Get backup data
+        $backup_data = get_option( $backup_key );
+
+        if ( ! $backup_data || ! isset( $backup_data['data'] ) ) {
+            wp_safe_redirect( add_query_arg( array(
+                'page'     => 'spvs-inventory',
+                'spvs_msg' => 'restore_invalid_backup'
+            ), admin_url( 'admin.php' ) ) );
+            exit;
+        }
+
+        // Create a backup before restoring (safety!)
+        $this->create_cost_data_backup();
+
+        // Restore costs
+        $restored = 0;
+        foreach ( $backup_data['data'] as $item ) {
+            if ( isset( $item['post_id'] ) && isset( $item['cost'] ) ) {
+                update_post_meta( $item['post_id'], self::PRODUCT_COST_META, $item['cost'] );
+                $restored++;
+            }
+        }
+
+        wp_safe_redirect( add_query_arg( array(
+            'page'     => 'spvs-inventory',
+            'spvs_msg' => 'restore_success:' . $restored
+        ), admin_url( 'admin.php' ) ) );
+        exit;
+    }
+
+    public function export_backup_data() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_export_backup' );
+
+        $backup_key = isset( $_GET['backup_key'] ) ? sanitize_text_field( $_GET['backup_key'] ) : '';
+
+        if ( empty( $backup_key ) ) {
+            $backup_key = get_option( self::BACKUP_LATEST_OPTION );
+        }
+
+        $backup_data = get_option( $backup_key );
+
+        if ( ! $backup_data || ! isset( $backup_data['data'] ) ) {
+            wp_die( esc_html__( 'Backup not found.', 'spvs-cost-profit' ) );
+        }
+
+        $filename = 'spvs-backup-' . date( 'Y-m-d-His', $backup_data['timestamp'] ) . '.csv';
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'Content-Disposition: attachment; filename=' . $filename );
+
+        $out = fopen( 'php://output', 'w' );
+        fputcsv( $out, array( 'product_id', 'cost' ) );
+
+        foreach ( $backup_data['data'] as $item ) {
+            fputcsv( $out, array( $item['post_id'], $item['cost'] ) );
+        }
+
+        fclose( $out );
+        exit;
     }
 
     /** ---------------- CSV Import helpers ---------------- */
@@ -494,6 +840,329 @@ final class SPVS_Cost_Profit {
 
         $msg = sprintf( 'import_done:%d:%d:%d:%d', $total, $updated, $skipped, $errors );
         wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) ); exit;
+    }
+
+    /** ---------------- Cost of Goods Import ---------------- */
+
+    /**
+     * Detect if WooCommerce Cost of Goods data exists
+     * Checks for _wc_cog_cost meta key (official WooCommerce Cost of Goods plugin)
+     *
+     * @return array Array with 'found' (bool), 'count' (int), 'sample_products' (array)
+     */
+    private function detect_cost_of_goods_data() {
+        global $wpdb;
+
+        // Check for _wc_cog_cost meta key (official WooCommerce Cost of Goods)
+        $count = $wpdb->get_var( "
+            SELECT COUNT(DISTINCT pm.post_id)
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+        " );
+
+        $count = (int) $count;
+
+        if ( $count === 0 ) {
+            return array(
+                'found' => false,
+                'count' => 0,
+                'sample_products' => array(),
+            );
+        }
+
+        // Get a few sample products to show
+        $samples = $wpdb->get_results( "
+            SELECT p.ID, p.post_title, pm.meta_value as cog_cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+            ORDER BY p.ID ASC
+            LIMIT 5
+        ", ARRAY_A );
+
+        return array(
+            'found' => true,
+            'count' => $count,
+            'sample_products' => $samples,
+        );
+    }
+
+    /**
+     * Import cost data from WooCommerce Cost of Goods plugin
+     * Copies _wc_cog_cost to _spvs_cost_price
+     */
+    public function import_from_cost_of_goods() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'You do not have permission to import cost data.', 'spvs-cost-profit' ) );
+        }
+        check_admin_referer( 'spvs_import_from_cog' );
+
+        global $wpdb;
+
+        // Create a backup first
+        $this->create_cost_data_backup();
+
+        // Get all products with _wc_cog_cost
+        $products = $wpdb->get_results( "
+            SELECT pm.post_id, pm.meta_value as cog_cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND pm.meta_value != '0'
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+        ", ARRAY_A );
+
+        $imported = 0;
+        $skipped = 0;
+        $updated = 0;
+        $batch_size = 10; // Process 10 products at a time
+        $batch_count = 0;
+
+        foreach ( $products as $product_data ) {
+            $product_id = (int) $product_data['post_id'];
+            $cog_cost = trim( $product_data['cog_cost'] );
+
+            if ( $cog_cost === '' || $cog_cost === '0' ) {
+                $skipped++;
+                continue;
+            }
+
+            // Format the cost value
+            $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
+
+            // Always overwrite with COG cost (fallback non-AJAX method defaults to overwrite)
+            update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+
+            // Track if this was new or updated
+            if ( $existing_cost && $existing_cost !== '' ) {
+                $updated++;
+            } else {
+                $imported++;
+            }
+
+            // Batch throttling: delay 1 second after every 10 products (max 1 request/sec)
+            $batch_count++;
+            if ( $batch_count >= $batch_size ) {
+                sleep( 1 ); // 1 second delay between batches
+                $batch_count = 0;
+            }
+        }
+
+        // Recalculate inventory totals after import
+        $this->recalculate_inventory_totals();
+
+        $msg = sprintf( 'cog_import_done:%d:%d:%d', $imported, $updated, $skipped );
+        wp_safe_redirect( add_query_arg( array(
+            'page' => 'spvs-inventory',
+            'spvs_msg' => rawurlencode( $msg )
+        ), admin_url( 'admin.php' ) ) );
+        exit;
+    }
+
+    /**
+     * AJAX handler for batch import with progress tracking
+     */
+    public function ajax_import_cog_batch() {
+        check_ajax_referer( 'spvs_cog_import', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
+        }
+
+        global $wpdb;
+
+        $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+        $overwrite = isset( $_POST['overwrite'] ) && $_POST['overwrite'] === '1';
+        $delete_after = isset( $_POST['delete_after'] ) && $_POST['delete_after'] === '1';
+        $batch_size = 10; // Process 10 at a time
+        $is_first_batch = ( $offset === 0 );
+
+        // Store options in transient for subsequent batches
+        if ( $is_first_batch ) {
+            set_transient( 'spvs_cog_import_options', array(
+                'overwrite' => $overwrite,
+                'delete_after' => $delete_after
+            ), HOUR_IN_SECONDS );
+        } else {
+            $options = get_transient( 'spvs_cog_import_options' );
+            if ( $options ) {
+                $overwrite = $options['overwrite'];
+                $delete_after = $options['delete_after'];
+            }
+        }
+
+        // Create backup on first batch
+        if ( $is_first_batch ) {
+            $this->create_cost_data_backup();
+        }
+
+        // Get total count (only on first batch)
+        if ( $is_first_batch ) {
+            $total = $wpdb->get_var( "
+                SELECT COUNT(DISTINCT pm.post_id)
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = '_wc_cog_cost'
+                AND pm.meta_value != ''
+                AND pm.meta_value != '0'
+                AND p.post_type IN ('product', 'product_variation')
+                AND p.post_status = 'publish'
+            " );
+            set_transient( 'spvs_cog_import_total', $total, HOUR_IN_SECONDS );
+        } else {
+            $total = get_transient( 'spvs_cog_import_total' );
+        }
+
+        // Get batch of products
+        $products = $wpdb->get_results( $wpdb->prepare( "
+            SELECT pm.post_id, pm.meta_value as cog_cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND pm.meta_value != '0'
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+            LIMIT %d OFFSET %d
+        ", $batch_size, $offset ), ARRAY_A );
+
+        $imported = 0;
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ( $products as $product_data ) {
+            $product_id = (int) $product_data['post_id'];
+            $cog_cost = trim( $product_data['cog_cost'] );
+
+            if ( $cog_cost === '' || $cog_cost === '0' ) {
+                $skipped++;
+                continue;
+            }
+
+            // Format the cost value
+            $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
+
+            // Import logic based on overwrite option
+            if ( $overwrite ) {
+                // Always overwrite existing costs
+                update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                if ( $existing_cost && $existing_cost !== '' ) {
+                    $updated++;
+                } else {
+                    $imported++;
+                }
+            } else {
+                // Only import if no existing cost
+                if ( ! $existing_cost || $existing_cost === '' || $existing_cost === '0' ) {
+                    update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                    $imported++;
+                } else {
+                    $skipped++;
+                }
+            }
+
+            // Delete COG data if requested (per product)
+            if ( $delete_after ) {
+                delete_post_meta( $product_id, '_wc_cog_cost' );
+            }
+        }
+
+        $processed = $offset + count( $products );
+        $is_complete = ( $processed >= $total || empty( $products ) );
+
+        // Recalculate inventory on last batch
+        if ( $is_complete ) {
+            $this->recalculate_inventory_totals();
+            delete_transient( 'spvs_cog_import_total' );
+            delete_transient( 'spvs_cog_import_options' );
+        }
+
+        wp_send_json_success( array(
+            'processed' => $processed,
+            'total' => $total,
+            'imported' => $imported,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'complete' => $is_complete,
+            'percentage' => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100
+        ) );
+    }
+
+    /** ---------------- Order Profit Recalculation (Batch) ---------------- */
+    public function ajax_recalc_orders_batch() {
+        check_ajax_referer( 'spvs_recalc_orders', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
+        }
+
+        $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+        $batch_size = 20; // Process 20 orders at a time
+        $is_first_batch = ( $offset === 0 );
+
+        // Get total count (cache it for subsequent batches)
+        if ( $is_first_batch ) {
+            $total = (int) wc_orders_count( apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
+            set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
+        } else {
+            $total = (int) get_transient( 'spvs_recalc_total' );
+            if ( ! $total ) {
+                $total = (int) wc_orders_count( apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
+            }
+        }
+
+        if ( $total <= 0 ) {
+            wp_send_json_error( array( 'message' => 'No orders found to recalculate' ) );
+        }
+
+        // Get batch of orders
+        $orders = wc_get_orders( array(
+            'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
+            'limit'  => $batch_size,
+            'offset' => $offset,
+            'orderby' => 'ID',
+            'order'   => 'ASC',
+        ) );
+
+        $recalculated = 0;
+        foreach ( $orders as $order ) {
+            if ( ! $order instanceof WC_Order ) continue;
+
+            // Force recalculation by removing stored profit
+            $order->delete_meta_data( self::ORDER_TOTAL_PROFIT_META );
+            $order->save_meta_data();
+
+            // Recalculate with current costs
+            $this->recalculate_order_total_profit( $order );
+            $recalculated++;
+        }
+
+        $processed = $offset + $recalculated;
+        $is_complete = ( $processed >= $total || empty( $orders ) );
+
+        // Clean up transient on completion
+        if ( $is_complete ) {
+            delete_transient( 'spvs_recalc_total' );
+        }
+
+        wp_send_json_success( array(
+            'processed'    => $processed,
+            'total'        => $total,
+            'recalculated' => $recalculated,
+            'complete'     => $is_complete,
+            'percentage'   => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100
+        ) );
     }
 
     /** ---------------- Column helpers for CSV/Preview ---------------- */
@@ -617,70 +1286,66 @@ final class SPVS_Cost_Profit {
             $end_date = date( 'Y-m-t' );
         }
 
-        // Query orders with profit data
-        $order_statuses = array_map( 'esc_sql', apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
-        $status_list = "'" . implode( "','", $order_statuses ) . "'";
+        // Use WooCommerce order query for accurate revenue matching Analytics
+        $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) );
 
-        // HPOS compatible query
-        if ( function_exists( 'wc_get_container' ) ) {
-            try {
-                $orders_table = $wpdb->prefix . 'wc_orders';
-                $orders_meta_table = $wpdb->prefix . 'wc_orders_meta';
-
-                // Check if HPOS tables exist
-                $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
-
-                if ( $table_exists ) {
-                    $query = $wpdb->prepare(
-                        "SELECT
-                            DATE_FORMAT(o.date_created_gmt, '%%Y-%%m') as month,
-                            COUNT(DISTINCT o.id) as order_count,
-                            SUM(CAST(om.meta_value AS DECIMAL(10,2))) as total_profit,
-                            SUM(o.total_amount) as total_revenue
-                        FROM {$orders_table} o
-                        LEFT JOIN {$orders_meta_table} om ON o.id = om.order_id AND om.meta_key = %s
-                        WHERE o.status IN ($status_list)
-                        AND o.date_created_gmt >= %s
-                        AND o.date_created_gmt <= %s
-                        GROUP BY month
-                        ORDER BY month ASC",
-                        self::ORDER_TOTAL_PROFIT_META,
-                        $start_date . ' 00:00:00',
-                        $end_date . ' 23:59:59'
-                    );
-
-                    $results = $wpdb->get_results( $query );
-                    if ( $results ) {
-                        return $results;
-                    }
-                }
-            } catch ( Exception $e ) {
-                // Fall through to legacy query
-            }
-        }
-
-        // Legacy post-based orders query
-        $query = $wpdb->prepare(
-            "SELECT
-                DATE_FORMAT(p.post_date, '%%Y-%%m') as month,
-                COUNT(DISTINCT p.ID) as order_count,
-                SUM(CAST(pm.meta_value AS DECIMAL(10,2))) as total_profit,
-                SUM(CAST(pm2.meta_value AS DECIMAL(10,2))) as total_revenue
-            FROM {$wpdb->posts} p
-            LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = %s
-            LEFT JOIN {$wpdb->postmeta} pm2 ON p.ID = pm2.post_id AND pm2.meta_key = '_order_total'
-            WHERE p.post_type = 'shop_order'
-            AND p.post_status IN ($status_list)
-            AND p.post_date >= %s
-            AND p.post_date <= %s
-            GROUP BY month
-            ORDER BY month ASC",
-            self::ORDER_TOTAL_PROFIT_META,
-            $start_date . ' 00:00:00',
-            $end_date . ' 23:59:59'
+        // Get orders using WooCommerce query
+        $args = array(
+            'limit'        => -1,
+            'status'       => $order_statuses,
+            'date_created' => $start_date . '...' . $end_date,
+            'return'       => 'ids',
         );
 
-        return $wpdb->get_results( $query );
+        $order_ids = wc_get_orders( $args );
+
+        // Group orders by month
+        $monthly_data = array();
+
+        foreach ( $order_ids as $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) continue;
+
+            $date = $order->get_date_created();
+            if ( ! $date ) continue;
+
+            $month = $date->format( 'Y-m' );
+
+            if ( ! isset( $monthly_data[ $month ] ) ) {
+                $monthly_data[ $month ] = array(
+                    'month'         => $month,
+                    'order_count'   => 0,
+                    'total_profit'  => 0,
+                    'total_revenue' => 0,
+                );
+            }
+
+            // Get gross sales (this matches WooCommerce Analytics "Gross sales")
+            // Gross Sales = Sum of line item subtotals (products BEFORE discounts)
+            $revenue = 0;
+            foreach ( $order->get_items() as $item ) {
+                // get_subtotal() returns line item price BEFORE discounts/coupons
+                $revenue += (float) $item->get_subtotal();
+            }
+
+            // Get profit from meta
+            $profit = get_post_meta( $order_id, self::ORDER_TOTAL_PROFIT_META, true );
+            $profit = $profit !== '' ? (float) $profit : 0;
+
+            $monthly_data[ $month ]['order_count']++;
+            $monthly_data[ $month ]['total_revenue'] += $revenue;
+            $monthly_data[ $month ]['total_profit'] += $profit;
+        }
+
+        // Convert to objects for consistency
+        $results = array();
+        ksort( $monthly_data );
+
+        foreach ( $monthly_data as $data ) {
+            $results[] = (object) $data;
+        }
+
+        return $results;
     }
 
     public function export_monthly_profit_csv() {
@@ -739,6 +1404,15 @@ final class SPVS_Cost_Profit {
             'spvs-profit-reports',
             array( $this, 'render_profit_reports_page' )
         );
+
+        add_submenu_page(
+            'woocommerce',
+            __( 'SPVS Data Recovery', 'spvs-cost-profit' ),
+            __( 'SPVS Data Recovery', 'spvs-cost-profit' ),
+            'manage_woocommerce',
+            'spvs-data-recovery',
+            array( $this, 'render_data_recovery_page' )
+        );
     }
 
     public function render_profit_reports_page() {
@@ -760,6 +1434,14 @@ final class SPVS_Cost_Profit {
         echo '<div class="wrap">';
         echo '<h1>' . esc_html__( 'Monthly Profit Reports', 'spvs-cost-profit' ) . '</h1>';
 
+        // Show success message if redirected after recalculation
+        if ( isset( $_GET['spvs_recalc_done'] ) ) {
+            $recalc_count = (int) $_GET['spvs_recalc_done'];
+            echo '<div class="notice notice-success is-dismissible"><p>';
+            echo sprintf( esc_html__( '✅ Successfully recalculated profit for %d orders using current cost data!', 'spvs-cost-profit' ), $recalc_count );
+            echo '</p></div>';
+        }
+
         // Date range selector
         echo '<form method="get" style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc; display: inline-block;">';
         echo '<input type="hidden" name="page" value="spvs-profit-reports" />';
@@ -770,6 +1452,13 @@ final class SPVS_Cost_Profit {
         echo '<button class="button button-primary" style="margin-left: 15px;">' . esc_html__( 'Update', 'spvs-cost-profit' ) . '</button> ';
         echo '<a class="button" href="' . esc_url( $export_url ) . '" style="margin-left: 10px;">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
         echo '</form>';
+
+        // Recalculate All Orders button
+        echo '<div style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc;">';
+        echo '<h3 style="margin-top:0;">' . esc_html__( 'Recalculate Historical Profit', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p>' . esc_html__( 'If you imported costs after orders were placed, use this to recalculate profit for all historical orders using current cost data.', 'spvs-cost-profit' ) . '</p>';
+        echo '<button type="button" id="spvs-recalc-orders-btn" class="button button-secondary">' . esc_html__( '🔄 Recalculate All Orders', 'spvs-cost-profit' ) . '</button>';
+        echo '</div>';
 
         if ( empty( $monthly_data ) ) {
             echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
@@ -896,7 +1585,7 @@ final class SPVS_Cost_Profit {
                                     position: 'left',
                                     ticks: {
                                         callback: function(value) {
-                                            return '<?php echo esc_js( get_woocommerce_currency_symbol() ); ?>' + value.toFixed(2);
+                                            return '<?php echo html_entity_decode( get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' ); ?>' + value.toFixed(2);
                                         }
                                     }
                                 }
@@ -908,6 +1597,159 @@ final class SPVS_Cost_Profit {
             </script>
             <?php
         }
+
+        // Progress Modal for Recalculation
+        echo '<div id="spvs-recalc-modal">';
+        echo '<div id="spvs-recalc-modal-content">';
+        echo '<h2>🔄 ' . esc_html__( 'Recalculating Order Profit', 'spvs-cost-profit' ) . '</h2>';
+        echo '<div id="spvs-recalc-progress-bar-container">';
+        echo '<div id="spvs-recalc-progress-bar">0%</div>';
+        echo '</div>';
+        echo '<p id="spvs-recalc-progress-status">' . esc_html__( 'Initializing...', 'spvs-cost-profit' ) . '</p>';
+        echo '<div style="margin-top:15px; font-size:13px; color:#666;">';
+        echo '<strong>' . esc_html__( 'Details:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo esc_html__( 'Recalculated:', 'spvs-cost-profit' ) . ' <span id="spvs-recalc-detail-count">0</span><br/>';
+        echo esc_html__( 'Processed:', 'spvs-cost-profit' ) . ' <span id="spvs-recalc-detail-processed">0 / 0</span>';
+        echo '</div>';
+        echo '<button type="button" id="spvs-recalc-complete-btn" class="button button-primary" style="margin-top:20px; display:none;">' . esc_html__( 'Close & Reload Page', 'spvs-cost-profit' ) . '</button>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '</div>';
+    }
+
+    /** --------------- Data Recovery Page --------------- */
+    public function render_data_recovery_page() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+
+        global $wpdb;
+
+        // Handle recovery action
+        if ( isset( $_POST['spvs_recover_from_revisions'] ) ) {
+            check_admin_referer( 'spvs_recover_from_revisions' );
+
+            $recovered = 0;
+            $revision_costs = $wpdb->get_results( "
+                SELECT pm.post_id, pm.meta_value as cost, p.post_parent
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = '" . self::PRODUCT_COST_META . "'
+                AND p.post_type = 'revision'
+                ORDER BY p.post_modified DESC
+            " );
+
+            if ( ! empty( $revision_costs ) ) {
+                $processed_parents = array();
+                foreach ( $revision_costs as $rev ) {
+                    if ( $rev->post_parent && ! in_array( $rev->post_parent, $processed_parents ) ) {
+                        $current_cost = get_post_meta( $rev->post_parent, self::PRODUCT_COST_META, true );
+                        if ( empty( $current_cost ) ) {
+                            update_post_meta( $rev->post_parent, self::PRODUCT_COST_META, $rev->cost );
+                            $recovered++;
+                            $processed_parents[] = $rev->post_parent;
+                        }
+                    }
+                }
+            }
+
+            if ( $recovered > 0 ) {
+                // Create backup after recovery
+                $this->create_cost_data_backup();
+                echo '<div class="notice notice-success"><p>' . sprintf( esc_html__( '✅ Successfully recovered %d product costs from revisions! A backup has been created.', 'spvs-cost-profit' ), $recovered ) . '</p></div>';
+            } else {
+                echo '<div class="notice notice-warning"><p>' . esc_html__( 'No products were recovered. Either data already exists or no revision data was found.', 'spvs-cost-profit' ) . '</p></div>';
+            }
+        }
+
+        // Get current cost data count
+        $current_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta}
+            WHERE meta_key = '" . self::PRODUCT_COST_META . "'
+        " );
+
+        // Check for revision data
+        $revision_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '" . self::PRODUCT_COST_META . "'
+            AND p.post_type = 'revision'
+        " );
+
+        echo '<div class="wrap">';
+        echo '<h1>🔧 ' . esc_html__( 'Data Recovery & Diagnostics', 'spvs-cost-profit' ) . '</h1>';
+        echo '<p>' . esc_html__( 'This page helps you diagnose and recover cost data if it has been lost.', 'spvs-cost-profit' ) . '</p>';
+
+        // Current Data Status
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid ' . ( $current_count > 0 ? '#00a32a' : '#d63638' ) . '; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h2>' . esc_html__( 'Current Data Status', 'spvs-cost-profit' ) . '</h2>';
+
+        if ( $current_count > 0 ) {
+            echo '<p style="font-size: 18px;"><strong style="color: #00a32a;">✅ ' . esc_html__( 'Cost data found:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( number_format( $current_count ) ) . ' ' . esc_html__( 'products with cost prices', 'spvs-cost-profit' ) . '</p>';
+            echo '<p>' . esc_html__( 'Your cost data appears to be intact.', 'spvs-cost-profit' ) . '</p>';
+        } else {
+            echo '<p style="font-size: 18px;"><strong style="color: #d63638;">⚠️ ' . esc_html__( 'No cost data found', 'spvs-cost-profit' ) . '</strong></p>';
+            echo '<p>' . esc_html__( 'No product cost prices were found in the database. This may indicate data loss.', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '</div>';
+
+        // Revision Backup Status
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid ' . ( $revision_count > 0 ? '#2271b1' : '#dba617' ) . '; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h2>' . esc_html__( 'Backup Data in Revisions', 'spvs-cost-profit' ) . '</h2>';
+
+        if ( $revision_count > 0 ) {
+            echo '<p style="font-size: 18px;"><strong style="color: #2271b1;">💾 ' . esc_html__( 'Backup data found:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( number_format( $revision_count ) ) . ' ' . esc_html__( 'cost entries in post revisions', 'spvs-cost-profit' ) . '</p>';
+            echo '<p>' . esc_html__( 'WordPress has saved cost data in post revision history. This can be used for recovery.', 'spvs-cost-profit' ) . '</p>';
+
+            if ( $current_count == 0 ) {
+                echo '<form method="post">';
+                wp_nonce_field( 'spvs_recover_from_revisions' );
+                echo '<button type="submit" name="spvs_recover_from_revisions" class="button button-primary button-hero" style="margin-top: 15px;">🔄 ' . esc_html__( 'Recover Cost Data from Revisions', 'spvs-cost-profit' ) . '</button>';
+                echo '<p class="description">' . esc_html__( 'This will restore cost data from WordPress post revisions for products that are missing cost values. A backup will be created after recovery.', 'spvs-cost-profit' ) . '</p>';
+                echo '</form>';
+            } else {
+                echo '<p><em>' . esc_html__( 'Recovery not needed - current data exists.', 'spvs-cost-profit' ) . '</em></p>';
+            }
+        } else {
+            echo '<p style="font-size: 18px;"><strong style="color: #dba617;">⚠️ ' . esc_html__( 'No backup data found', 'spvs-cost-profit' ) . '</strong></p>';
+            echo '<p>' . esc_html__( 'No cost data was found in WordPress post revisions.', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '</div>';
+
+        // Export Current Data
+        if ( $current_count > 0 ) {
+            $export_url = add_query_arg( array(
+                'action'   => 'spvs_export_backup',
+                '_wpnonce' => wp_create_nonce( 'spvs_export_backup' )
+            ), admin_url( 'admin-post.php' ) );
+
+            echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid #2271b1; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+            echo '<h2>' . esc_html__( 'Export Current Data', 'spvs-cost-profit' ) . '</h2>';
+            echo '<p>' . esc_html__( 'Download your current cost data as a CSV backup file.', 'spvs-cost-profit' ) . '</p>';
+            echo '<a href="' . esc_url( $export_url ) . '" class="button button-primary">📥 ' . esc_html__( 'Download Cost Data Backup (CSV)', 'spvs-cost-profit' ) . '</a>';
+            echo '</div>';
+        }
+
+        // Alternative Recovery Options
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h2>' . esc_html__( 'Alternative Recovery Options', 'spvs-cost-profit' ) . '</h2>';
+        echo '<ul style="line-height: 1.8;">';
+        echo '<li><strong>' . esc_html__( 'Automatic Backups:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Check WooCommerce > SPVS Inventory > Data Backup & Protection for automatic backups (created daily at 3 AM).', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Hosting Backup:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Contact your hosting provider to restore your database from a backup before the data loss occurred.', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Previous CSV Export:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'If you have a previous CSV export, use the import feature at WooCommerce > SPVS Inventory to restore costs.', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Manual Entry:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Edit products individually to re-enter cost prices.', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '</div>';
+
+        // Prevention Tips
+        echo '<div style="background: #f0f6fc; padding: 20px; margin: 20px 0; border-left: 4px solid #2271b1;">';
+        echo '<h2>🛡️ ' . esc_html__( 'Preventing Future Data Loss', 'spvs-cost-profit' ) . '</h2>';
+        echo '<ul style="line-height: 1.8;">';
+        echo '<li><strong>' . esc_html__( 'Daily Backups:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'The plugin automatically backs up cost data daily at 3:00 AM (keeps 7 days).', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Manual Backups:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Create backups anytime at WooCommerce > SPVS Inventory > "Create Backup Now".', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Export Regularly:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Download CSV backups weekly and store them securely offline.', 'spvs-cost-profit' ) . '</li>';
+        echo '<li><strong>' . esc_html__( 'Before Updates:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Always create a manual backup before updating plugins or WordPress.', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '</div>';
 
         echo '</div>';
     }
@@ -937,6 +1779,13 @@ final class SPVS_Cost_Profit {
 
         echo '<div class="wrap"><h1>' . esc_html__( 'SPVS Inventory Value', 'spvs-cost-profit' ) . '</h1>';
 
+        // Auto-recovery notice
+        $auto_recovered = get_transient( 'spvs_auto_recovery_done' );
+        if ( $auto_recovered ) {
+            echo '<div class="notice notice-success is-dismissible"><p><strong>🎉 ' . esc_html__( 'Auto-Recovery Successful!', 'spvs-cost-profit' ) . '</strong> ' . sprintf( esc_html__( 'Recovered %d product costs from revisions during plugin upgrade. A backup has been created.', 'spvs-cost-profit' ), (int) $auto_recovered ) . '</p></div>';
+            delete_transient( 'spvs_auto_recovery_done' );
+        }
+
         // Notices
         if ( isset( $_GET['spvs_msg'] ) ) {
             $m = sanitize_text_field( wp_unslash( $_GET['spvs_msg'] ) );
@@ -957,6 +1806,13 @@ final class SPVS_Cost_Profit {
                         echo '<div class="notice"><p>' . sprintf( esc_html__( 'Some rows did not match any product. You can %s.', 'spvs-cost-profit' ), '<a class="button" href="' . $miss_url . '">' . esc_html__( 'download unmatched rows', 'spvs-cost-profit' ) . '</a>' ) . '</p></div>';
                     }
                 }
+            } elseif ( 0 === strpos( $m, 'cog_import_done:' ) ) {
+                $parts = explode( ':', $m );
+                if ( count( $parts ) === 4 ) {
+                    printf( '<div class="notice notice-success is-dismissible"><p><strong>✅ ' . esc_html__( 'Cost of Goods Import Complete!', 'spvs-cost-profit' ) . '</strong><br/>%s</p></div>',
+                        esc_html( sprintf( __( 'Imported: %d new costs, Updated: %d existing costs, Skipped: %d (already set or zero)', 'spvs-cost-profit' ), (int)$parts[1], (int)$parts[2], (int)$parts[3] ) )
+                    );
+                }
             }
         }
 
@@ -965,7 +1821,27 @@ final class SPVS_Cost_Profit {
         echo '<strong>Spread:</strong> ' . wp_kses_post( wc_price( $retail - $tcop ) ) . '</p>';
         if ( $updated ) echo '<p style="opacity:.75;">' . esc_html__( 'Updated', 'spvs-cost-profit' ) . ' ' . esc_html( human_time_diff( $updated, time() ) ) . ' ' . esc_html__( 'ago', 'spvs-cost-profit' ) . '</p>';
         echo '<p>' . esc_html__( 'Items processed:', 'spvs-cost-profit' ) . ' ' . esc_html( $count ) . ' · ' . esc_html__( 'Managing stock:', 'spvs-cost-profit' ) . ' ' . esc_html( $managed ) . ' · ' . esc_html__( 'Qty > 0:', 'spvs-cost-profit' ) . ' ' . esc_html( $qty_gt0 ) . '</p>';
+
+        // Warning if TCOP is 0 but there are costs in the database
+        if ( $tcop == 0 && $count > 0 ) {
+            global $wpdb;
+            $cost_count = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value != '' AND meta_value != '0'",
+                self::PRODUCT_COST_META
+            ) );
+            if ( $cost_count > 0 ) {
+                echo '<div class="notice notice-warning inline" style="margin:15px 0; padding:10px;"><p>';
+                echo '<strong>⚠️ ' . esc_html__( 'TCOP is $0 but costs are set!', 'spvs-cost-profit' ) . '</strong><br/>';
+                echo sprintf( esc_html__( 'Found %d products with costs, but TCOP = $0. This usually means:', 'spvs-cost-profit' ), $cost_count ) . '<br/>';
+                echo '• ' . esc_html__( 'Products don\'t have "Manage stock" enabled in WooCommerce', 'spvs-cost-profit' ) . '<br/>';
+                echo '• ' . esc_html__( 'Stock quantities are set to 0', 'spvs-cost-profit' ) . '<br/>';
+                echo '<strong>' . esc_html__( 'Fix: Enable stock management on your products and set quantities, then click "Recalculate Now"', 'spvs-cost-profit' ) . '</strong>';
+                echo '</p></div>';
+            }
+        }
+
         echo '<p style="margin-top:6px; opacity:.8;">' . esc_html__( 'Note: If a variation has no cost set, it will use the parent product cost automatically.', 'spvs-cost-profit' ) . '</p>';
+        echo '<p style="margin-top:6px; opacity:.8;"><strong>' . esc_html__( 'Important:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'TCOP only counts products with stock management enabled and quantity > 0.', 'spvs-cost-profit' ) . '</p>';
 
         echo '<form method="get" style="margin:12px 0; display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">';
         echo '<input type="hidden" name="page" value="spvs-inventory" />';
@@ -979,6 +1855,161 @@ final class SPVS_Cost_Profit {
         echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_missing_csv' ) ) . '">' . esc_html__( 'Download items with Qty>0 & missing cost', 'spvs-cost-profit' ) . '</a>';
         echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_recalc_inventory&_wpnonce=' . wp_create_nonce( 'spvs_recalc_inventory' ) ) ) . '">' . esc_html__( 'Recalculate Now', 'spvs-cost-profit' ) . '</a>';
         echo '</form>';
+
+        // Cost of Goods Import Section
+        $cog_data = $this->detect_cost_of_goods_data();
+        if ( $cog_data['found'] ) {
+            echo '<hr style="margin:18px 0;"><h2>📦 ' . esc_html__( 'Import from WooCommerce Cost of Goods', 'spvs-cost-profit' ) . ' <span style="font-size:14px; color:#00a32a; font-weight:normal;">(NEW in v1.4.8)</span></h2>';
+
+            echo '<div style="background:#e7f7e7; padding:15px; border-radius:5px; border-left:4px solid #00a32a; margin:15px 0;">';
+            echo '<p style="margin:0 0 10px 0;"><strong>✅ ' . esc_html__( 'Cost of Goods Data Detected!', 'spvs-cost-profit' ) . '</strong></p>';
+            printf( '<p style="margin:0 0 10px 0;">%s</p>',
+                sprintf( esc_html__( 'Found %d products with cost data from WooCommerce Cost of Goods plugin.', 'spvs-cost-profit' ), $cog_data['count'] )
+            );
+
+            if ( ! empty( $cog_data['sample_products'] ) ) {
+                echo '<details style="margin:10px 0;"><summary style="cursor:pointer; font-weight:600;">' . esc_html__( 'Show sample products', 'spvs-cost-profit' ) . '</summary>';
+                echo '<table style="margin-top:10px; border-collapse:collapse; width:100%; background:#fff;"><thead><tr style="background:#f0f0f0;">';
+                echo '<th style="padding:8px; text-align:left; border:1px solid #ddd;">' . esc_html__( 'Product ID', 'spvs-cost-profit' ) . '</th>';
+                echo '<th style="padding:8px; text-align:left; border:1px solid #ddd;">' . esc_html__( 'Product Name', 'spvs-cost-profit' ) . '</th>';
+                echo '<th style="padding:8px; text-align:left; border:1px solid #ddd;">' . esc_html__( 'COG Cost', 'spvs-cost-profit' ) . '</th>';
+                echo '</tr></thead><tbody>';
+                foreach ( $cog_data['sample_products'] as $sample ) {
+                    echo '<tr>';
+                    echo '<td style="padding:8px; border:1px solid #ddd;">' . esc_html( $sample['ID'] ) . '</td>';
+                    echo '<td style="padding:8px; border:1px solid #ddd;">' . esc_html( $sample['post_title'] ) . '</td>';
+                    echo '<td style="padding:8px; border:1px solid #ddd;">' . wp_kses_post( wc_price( $sample['cog_cost'] ) ) . '</td>';
+                    echo '</tr>';
+                }
+                echo '</tbody></table></details>';
+            }
+
+            echo '<p style="margin:10px 0 0 0;"><strong>' . esc_html__( 'How it works:', 'spvs-cost-profit' ) . '</strong></p>';
+            echo '<ul style="margin:5px 0 10px 20px;">';
+            echo '<li>' . esc_html__( 'Creates automatic backup before import', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Imports costs from WooCommerce Cost of Goods (_wc_cog_cost)', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Skips only zero or empty COG values', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Recalculates inventory totals after import', 'spvs-cost-profit' ) . '</li>';
+            echo '</ul>';
+
+            // Import Options
+            echo '<div style="background:#fff; border:1px solid #ddd; padding:15px; margin:15px 0; border-radius:5px;">';
+            echo '<h4 style="margin-top:0;">' . esc_html__( 'Import Options', 'spvs-cost-profit' ) . '</h4>';
+
+            echo '<label style="display:block; margin:10px 0;">';
+            echo '<input type="checkbox" id="spvs-cog-overwrite" checked /> ';
+            echo '<strong>' . esc_html__( 'Overwrite existing costs', 'spvs-cost-profit' ) . '</strong>';
+            echo '<br/><span style="color:#666; font-size:13px; margin-left:20px;">' . esc_html__( 'Replace all existing cost data with COG values. If unchecked, only imports products without existing costs.', 'spvs-cost-profit' ) . '</span>';
+            echo '</label>';
+
+            echo '<label style="display:block; margin:10px 0;">';
+            echo '<input type="checkbox" id="spvs-cog-delete-after" /> ';
+            echo '<strong>' . esc_html__( 'Delete Cost of Goods data after import', 'spvs-cost-profit' ) . '</strong>';
+            echo '<br/><span style="color:#666; font-size:13px; margin-left:20px;">' . esc_html__( 'Remove _wc_cog_cost meta data after successful import to avoid data duplication.', 'spvs-cost-profit' ) . '</span>';
+            echo '</label>';
+            echo '</div>';
+
+            echo '<div style="margin-top:10px;">';
+            echo '<button type="button" id="spvs-start-cog-import" class="button button-primary" style="background:#00a32a; border-color:#00a32a;">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
+            echo ' <span style="color:#666; font-size:12px;">' . sprintf( esc_html__( '(%d products will be processed)', 'spvs-cost-profit' ), $cog_data['count'] ) . '</span>';
+            echo '</div>';
+
+            // Progress Modal
+            echo '<div id="spvs-import-modal">';
+            echo '<div id="spvs-import-modal-content">';
+            echo '<h2>📦 ' . esc_html__( 'Importing Cost of Goods Data', 'spvs-cost-profit' ) . '</h2>';
+            echo '<div id="spvs-progress-bar-container">';
+            echo '<div id="spvs-progress-bar">0%</div>';
+            echo '</div>';
+            echo '<div id="spvs-progress-status">' . esc_html__( 'Initializing...', 'spvs-cost-profit' ) . '</div>';
+            echo '<div id="spvs-progress-details">';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Imported:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-imported">0</span></div>';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Updated:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-updated">0</span></div>';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Skipped:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-skipped">0</span></div>';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Processed:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-processed">0 / 0</span></div>';
+            echo '</div>';
+            echo '<button id="spvs-import-complete-btn" class="button button-primary button-large">' . esc_html__( 'Close & Reload Page', 'spvs-cost-profit' ) . '</button>';
+            echo '</div>';
+            echo '</div>';
+
+            echo '</div>';
+        }
+
+        // Data Backup & Restore Section
+        $backups = $this->get_available_backups();
+        $latest_backup = ! empty( $backups ) ? $backups[0] : null;
+
+        echo '<hr style="margin:18px 0;"><h2>🔒 ' . esc_html__( 'Data Backup & Protection', 'spvs-cost-profit' ) . ' <span style="font-size:14px; color:#d63638; font-weight:normal;">(NEW in v1.4.1)</span></h2>';
+
+        // Handle backup/restore messages
+        if ( isset( $_GET['spvs_msg'] ) ) {
+            $m = sanitize_text_field( wp_unslash( $_GET['spvs_msg'] ) );
+            if ( 'backup_created' === $m ) {
+                echo '<div class="notice notice-success"><p>' . esc_html__( '✅ Backup created successfully!', 'spvs-cost-profit' ) . '</p></div>';
+            } elseif ( 'backup_failed' === $m ) {
+                echo '<div class="notice notice-error"><p>' . esc_html__( '❌ Backup failed. No cost data found.', 'spvs-cost-profit' ) . '</p></div>';
+            } elseif ( 0 === strpos( $m, 'restore_success:' ) ) {
+                $restored = str_replace( 'restore_success:', '', $m );
+                echo '<div class="notice notice-success"><p>' . sprintf( esc_html__( '✅ Successfully restored %d product costs!', 'spvs-cost-profit' ), (int) $restored ) . '</p></div>';
+            } elseif ( 'restore_invalid_backup' === $m ) {
+                echo '<div class="notice notice-error"><p>' . esc_html__( '❌ Invalid backup selected.', 'spvs-cost-profit' ) . '</p></div>';
+            }
+        }
+
+        echo '<div style="background:#f8f9fa; padding:15px; border-radius:5px; border-left:4px solid #2271b1; margin:15px 0;">';
+        echo '<p style="margin:0 0 10px 0;"><strong>' . esc_html__( 'Automatic Protection:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Your cost data is automatically backed up daily at 3:00 AM. Up to 2 backups are kept.', 'spvs-cost-profit' ) . '</p>';
+
+        if ( $latest_backup ) {
+            echo '<p style="margin:0;"><strong>' . esc_html__( 'Latest Backup:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( $latest_backup['date'] ) . ' (' . esc_html( $latest_backup['age'] ) . ') - ' . esc_html( $latest_backup['count'] ) . ' ' . esc_html__( 'products', 'spvs-cost-profit' ) . '</p>';
+        } else {
+            echo '<p style="margin:0; color:#d63638;"><strong>' . esc_html__( '⚠️ No backups found.', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Click "Create Backup Now" to create your first backup.', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '</div>';
+
+        // Manual backup button
+        echo '<div style="margin:15px 0;">';
+        echo '<a href="' . esc_url( admin_url( 'admin-post.php?action=spvs_backup_costs_now&_wpnonce=' . wp_create_nonce( 'spvs_backup_costs_now' ) ) ) . '" class="button button-primary">💾 ' . esc_html__( 'Create Backup Now', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
+
+        // Available backups list
+        if ( ! empty( $backups ) ) {
+            echo '<h3>' . esc_html__( 'Available Backups', 'spvs-cost-profit' ) . '</h3>';
+            echo '<table class="widefat striped"><thead><tr>';
+            echo '<th>' . esc_html__( 'Date & Time', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Age', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Products', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Actions', 'spvs-cost-profit' ) . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ( $backups as $backup ) {
+                echo '<tr>';
+                echo '<td><strong>' . esc_html( $backup['date'] ) . '</strong></td>';
+                echo '<td>' . esc_html( $backup['age'] ) . '</td>';
+                echo '<td>' . esc_html( $backup['count'] ) . '</td>';
+                echo '<td>';
+
+                // Restore form
+                echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" style="display:inline; margin-right:10px;" onsubmit="return confirm(\'' . esc_js( __( 'Are you sure you want to restore from this backup? Current data will be backed up first.', 'spvs-cost-profit' ) ) . '\');">';
+                echo '<input type="hidden" name="action" value="spvs_restore_costs" />';
+                echo '<input type="hidden" name="backup_key" value="' . esc_attr( $backup['key'] ) . '" />';
+                wp_nonce_field( 'spvs_restore_costs' );
+                echo '<button type="submit" class="button">🔄 ' . esc_html__( 'Restore', 'spvs-cost-profit' ) . '</button>';
+                echo '</form>';
+
+                // Export backup
+                $export_backup_url = add_query_arg( array(
+                    'action'     => 'spvs_export_backup',
+                    '_wpnonce'   => wp_create_nonce( 'spvs_export_backup' ),
+                    'backup_key' => $backup['key']
+                ), admin_url( 'admin-post.php' ) );
+                echo '<a href="' . esc_url( $export_backup_url ) . '" class="button">📥 ' . esc_html__( 'Download', 'spvs-cost-profit' ) . '</a>';
+
+                echo '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+        }
 
         // Upload form
         echo '<hr style="margin:18px 0;"><h2>' . esc_html__( 'Import Costs (CSV)', 'spvs-cost-profit' ) . '</h2>';
@@ -1089,12 +2120,62 @@ final class SPVS_Cost_Profit {
 register_activation_hook( __FILE__, function() {
     if ( version_compare( PHP_VERSION, '7.4', '<' ) ) { deactivate_plugins( plugin_basename( __FILE__ ) ); wp_die( esc_html__( 'SPVS Cost & Profit requires PHP 7.4 or higher.', 'spvs-cost-profit' ) ); }
     if ( ! class_exists( 'WooCommerce' ) ) { deactivate_plugins( plugin_basename( __FILE__ ) ); wp_die( esc_html__( 'SPVS Cost & Profit requires WooCommerce to be active.', 'spvs-cost-profit' ) ); }
+
+    // Auto-recovery and backup on activation/upgrade (v1.4.1+)
+    if ( class_exists( 'SPVS_Cost_Profit' ) ) {
+        $instance = SPVS_Cost_Profit::instance();
+
+        // Check if cost data exists
+        global $wpdb;
+        $cost_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta}
+            WHERE meta_key = '_spvs_cost_price'
+        " );
+
+        // If no cost data, attempt recovery from revisions
+        if ( $cost_count == 0 ) {
+            $recovered = 0;
+            $revision_costs = $wpdb->get_results( "
+                SELECT pm.post_id, pm.meta_value as cost, p.post_parent
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = '_spvs_cost_price'
+                AND p.post_type = 'revision'
+                ORDER BY p.post_modified DESC
+            " );
+
+            if ( ! empty( $revision_costs ) ) {
+                $processed_parents = array();
+                foreach ( $revision_costs as $rev ) {
+                    if ( $rev->post_parent && ! in_array( $rev->post_parent, $processed_parents ) ) {
+                        update_post_meta( $rev->post_parent, '_spvs_cost_price', $rev->cost );
+                        $recovered++;
+                        $processed_parents[] = $rev->post_parent;
+                    }
+                }
+
+                // Set a flag to show recovery message
+                if ( $recovered > 0 ) {
+                    set_transient( 'spvs_auto_recovery_done', $recovered, HOUR_IN_SECONDS );
+                }
+            }
+        }
+
+        // Create initial backup
+        if ( method_exists( $instance, 'create_cost_data_backup' ) ) {
+            $instance->create_cost_data_backup();
+        }
+    }
 } );
 
 // Deactivation: clear cron/transient (leave data intact until uninstall)
 register_deactivation_hook( __FILE__, function() {
     $ts = wp_next_scheduled( 'spvs_daily_inventory_recalc' );
     if ( $ts ) { wp_unschedule_event( $ts, 'spvs_daily_inventory_recalc' ); }
+
+    $ts2 = wp_next_scheduled( 'spvs_daily_cost_backup' );
+    if ( $ts2 ) { wp_unschedule_event( $ts2, 'spvs_daily_cost_backup' ); }
+
     delete_transient( SPVS_Cost_Profit::RECALC_LOCK_TRANSIENT );
 } );
 
