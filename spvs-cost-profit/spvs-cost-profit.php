@@ -159,7 +159,7 @@ final class SPVS_Cost_Profit_V2 {
     /** ============= REPORTS PAGE ============= */
 
     public function render_reports_page() {
-        // Get date range
+        // Get date range - default to current month
         $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01' );
         $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-t' );
 
@@ -167,7 +167,7 @@ final class SPVS_Cost_Profit_V2 {
         $data = $this->get_report_data( $start_date, $end_date );
 
         ?>
-        <div class="wrap">
+        <div class="wrap" style="max-width: 100%;">
             <h1>📊 Profit Reports</h1>
 
             <?php if ( isset( $_GET['recalc_success'] ) ) : ?>
@@ -176,10 +176,23 @@ final class SPVS_Cost_Profit_V2 {
                 </div>
             <?php endif; ?>
 
-            <!-- Date Range Selector -->
-            <div class="card" style="max-width: 800px; padding: 20px; margin: 20px 0;">
-                <h2>Select Date Range</h2>
-                <form method="get" style="display: flex; gap: 15px; align-items: end;">
+            <!-- Quick Date Shortcuts -->
+            <div class="card" style="padding: 20px; margin: 20px 0;">
+                <h2>📅 Quick Select</h2>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <a href="<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'start_date' => date( 'Y-m-01' ), 'end_date' => date( 'Y-m-t' ) ), admin_url( 'admin.php' ) ) ); ?>" class="button">This Month</a>
+                    <a href="<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'start_date' => date( 'Y-m-01', strtotime( '-1 month' ) ), 'end_date' => date( 'Y-m-t', strtotime( '-1 month' ) ) ), admin_url( 'admin.php' ) ) ); ?>" class="button">Last Month</a>
+                    <a href="<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'start_date' => date( 'Y-m-01', strtotime( '-2 months' ) ), 'end_date' => date( 'Y-m-t' ) ), admin_url( 'admin.php' ) ) ); ?>" class="button">Last 3 Months</a>
+                    <a href="<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'start_date' => date( 'Y-m-01', strtotime( '-5 months' ) ), 'end_date' => date( 'Y-m-t' ) ), admin_url( 'admin.php' ) ) ); ?>" class="button">Last 6 Months</a>
+                    <a href="<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'start_date' => date( 'Y-01-01' ), 'end_date' => date( 'Y-12-31' ) ), admin_url( 'admin.php' ) ) ); ?>" class="button">This Year</a>
+                    <a href="<?php echo esc_url( add_query_arg( array( 'page' => 'spvs-profit-reports', 'start_date' => date( 'Y-01-01', strtotime( '-1 year' ) ), 'end_date' => date( 'Y-12-31', strtotime( '-1 year' ) ) ), admin_url( 'admin.php' ) ) ); ?>" class="button">Last Year</a>
+                </div>
+            </div>
+
+            <!-- Custom Date Range Selector -->
+            <div class="card" style="padding: 20px; margin: 20px 0;">
+                <h2>📆 Custom Date Range</h2>
+                <form method="get" style="display: flex; gap: 15px; align-items: end; flex-wrap: wrap;">
                     <input type="hidden" name="page" value="spvs-profit-reports">
                     <div>
                         <label><strong>Start Date:</strong></label><br>
@@ -213,22 +226,46 @@ final class SPVS_Cost_Profit_V2 {
             <?php else : ?>
 
                 <!-- Summary Cards -->
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin: 20px 0;">
+                <style>
+                    .spvs-summary-grid {
+                        display: grid;
+                        grid-template-columns: repeat(4, 1fr);
+                        gap: 20px;
+                        margin: 20px 0;
+                    }
+                    @media (max-width: 1200px) {
+                        .spvs-summary-grid {
+                            grid-template-columns: repeat(2, 1fr);
+                        }
+                    }
+                    @media (max-width: 600px) {
+                        .spvs-summary-grid {
+                            grid-template-columns: 1fr;
+                        }
+                    }
+                </style>
+                <div class="spvs-summary-grid">
                     <div class="card" style="padding: 20px; text-align: center;">
-                        <h3 style="margin: 0; color: #666;">Total Revenue</h3>
-                        <p style="font-size: 32px; font-weight: bold; margin: 10px 0; color: #2271b1;">
+                        <h3 style="margin: 0; color: #666; font-size: 14px;">Total Revenue</h3>
+                        <p style="font-size: 28px; font-weight: bold; margin: 10px 0; color: #2271b1;">
                             <?php echo wc_price( $data['summary']['revenue'] ); ?>
                         </p>
                     </div>
                     <div class="card" style="padding: 20px; text-align: center;">
-                        <h3 style="margin: 0; color: #666;">Total Profit</h3>
-                        <p style="font-size: 32px; font-weight: bold; margin: 10px 0; color: #00a32a;">
+                        <h3 style="margin: 0; color: #666; font-size: 14px;">Total Cost</h3>
+                        <p style="font-size: 28px; font-weight: bold; margin: 10px 0; color: #d63638;">
+                            <?php echo wc_price( $data['summary']['cost'] ); ?>
+                        </p>
+                    </div>
+                    <div class="card" style="padding: 20px; text-align: center;">
+                        <h3 style="margin: 0; color: #666; font-size: 14px;">Total Profit</h3>
+                        <p style="font-size: 28px; font-weight: bold; margin: 10px 0; color: #00a32a;">
                             <?php echo wc_price( $data['summary']['profit'] ); ?>
                         </p>
                     </div>
                     <div class="card" style="padding: 20px; text-align: center;">
-                        <h3 style="margin: 0; color: #666;">Profit Margin</h3>
-                        <p style="font-size: 32px; font-weight: bold; margin: 10px 0; color: #d63638;">
+                        <h3 style="margin: 0; color: #666; font-size: 14px;">Profit Margin</h3>
+                        <p style="font-size: 28px; font-weight: bold; margin: 10px 0; color: #8c8c8c;">
                             <?php echo number_format( $data['summary']['margin'], 1 ); ?>%
                         </p>
                     </div>
@@ -336,6 +373,7 @@ final class SPVS_Cost_Profit_V2 {
 
         $daily_data = array();
         $total_revenue = 0;
+        $total_cost = 0;
         $total_profit = 0;
 
         foreach ( $order_ids as $order_id ) {
@@ -346,10 +384,18 @@ final class SPVS_Cost_Profit_V2 {
 
             $date = $order->get_date_created()->format( 'Y-m-d' );
 
-            // Calculate revenue (line totals)
+            // Calculate revenue and cost
             $revenue = 0;
+            $cost = 0;
             foreach ( $order->get_items() as $item ) {
                 $revenue += (float) $item->get_total();
+
+                // Calculate cost for this line item
+                $product = $item->get_product();
+                if ( $product ) {
+                    $unit_cost = $this->get_product_cost( $product->get_id() );
+                    $cost += $unit_cost * $item->get_quantity();
+                }
             }
 
             // Get profit from meta
@@ -361,6 +407,7 @@ final class SPVS_Cost_Profit_V2 {
                     'date' => $date,
                     'orders' => 0,
                     'revenue' => 0,
+                    'cost' => 0,
                     'profit' => 0,
                     'margin' => 0,
                 );
@@ -368,9 +415,11 @@ final class SPVS_Cost_Profit_V2 {
 
             $daily_data[ $date ]['orders']++;
             $daily_data[ $date ]['revenue'] += $revenue;
+            $daily_data[ $date ]['cost'] += $cost;
             $daily_data[ $date ]['profit'] += $profit;
 
             $total_revenue += $revenue;
+            $total_cost += $cost;
             $total_profit += $profit;
         }
 
@@ -383,6 +432,7 @@ final class SPVS_Cost_Profit_V2 {
             'daily' => array_values( $daily_data ),
             'summary' => array(
                 'revenue' => $total_revenue,
+                'cost' => $total_cost,
                 'profit' => $total_profit,
                 'margin' => $total_revenue > 0 ? ( $total_profit / $total_revenue ) * 100 : 0,
             ),
