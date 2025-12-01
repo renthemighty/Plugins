@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.3
+ * Version: 1.9.4
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -709,21 +709,26 @@ final class SPVS_Cost_Profit {
         }
 
         // Query orders with profit data
-        $order_statuses = array_map( 'esc_sql', apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
-        $status_list = "'" . implode( "','", $order_statuses ) . "'";
+        $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) );
+        $legacy_statuses = array_map( 'esc_sql', $order_statuses );
+        $legacy_status_list = "'" . implode( "','", $legacy_statuses ) . "'";
 
         // HPOS compatible query
         if ( function_exists( 'wc_get_container' ) ) {
             try {
                 $orders_table = $wpdb->prefix . 'wc_orders';
                 $orders_meta_table = $wpdb->prefix . 'wc_orders_meta';
-                $order_items_table = $wpdb->prefix . 'woocommerce_order_items';
-                $order_itemmeta_table = $wpdb->prefix . 'woocommerce_order_itemmeta';
 
                 // Check if HPOS tables exist
                 $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
 
                 if ( $table_exists ) {
+                    // CRITICAL FIX: HPOS stores statuses WITHOUT 'wc-' prefix
+                    $hpos_statuses = array_map( function( $status ) {
+                        return esc_sql( str_replace( 'wc-', '', $status ) );
+                    }, $order_statuses );
+                    $hpos_status_list = "'" . implode( "','", $hpos_statuses ) . "'";
+
                     $query = $wpdb->prepare(
                         "SELECT
                             DATE_FORMAT(o.date_created_gmt, '$date_format') as period,
@@ -732,7 +737,7 @@ final class SPVS_Cost_Profit {
                             SUM(o.total_amount) as total_revenue
                         FROM {$orders_table} o
                         LEFT JOIN {$orders_meta_table} om ON o.id = om.order_id AND om.meta_key = %s
-                        WHERE o.status IN ($status_list)
+                        WHERE o.status IN ($hpos_status_list)
                         AND DATE(o.date_created_gmt) >= %s
                         AND DATE(o.date_created_gmt) <= %s
                         GROUP BY period
@@ -743,7 +748,14 @@ final class SPVS_Cost_Profit {
                     );
 
                     $results = $wpdb->get_results( $query );
-                    if ( $results ) {
+
+                    // Check for SQL errors
+                    if ( $wpdb->last_error ) {
+                        error_log( 'SPVS Profit Report HPOS Query Error: ' . $wpdb->last_error );
+                        error_log( 'SPVS Profit Report Query: ' . $query );
+                    }
+
+                    if ( is_array( $results ) ) {
                         // Calculate total cost for each period
                         foreach ( $results as $row ) {
                             $row->total_cost = ( (float) $row->total_revenue ) - ( (float) $row->total_profit );
@@ -752,6 +764,7 @@ final class SPVS_Cost_Profit {
                     }
                 }
             } catch ( Exception $e ) {
+                error_log( 'SPVS Profit Report HPOS Exception: ' . $e->getMessage() );
                 // Fall through to legacy query
             }
         }
@@ -767,7 +780,7 @@ final class SPVS_Cost_Profit {
             LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = %s
             LEFT JOIN {$wpdb->postmeta} pm2 ON p.ID = pm2.post_id AND pm2.meta_key = '_order_total'
             WHERE p.post_type = 'shop_order'
-            AND p.post_status IN ($status_list)
+            AND p.post_status IN ($legacy_status_list)
             AND DATE(p.post_date) >= %s
             AND DATE(p.post_date) <= %s
             GROUP BY period
@@ -778,6 +791,17 @@ final class SPVS_Cost_Profit {
         );
 
         $results = $wpdb->get_results( $query );
+
+        // Check for SQL errors
+        if ( $wpdb->last_error ) {
+            error_log( 'SPVS Profit Report Legacy Query Error: ' . $wpdb->last_error );
+            error_log( 'SPVS Profit Report Query: ' . $query );
+        }
+
+        if ( ! is_array( $results ) ) {
+            return array();
+        }
+
         // Calculate total cost for each period
         foreach ( $results as $row ) {
             $row->total_cost = ( (float) $row->total_revenue ) - ( (float) $row->total_profit );
