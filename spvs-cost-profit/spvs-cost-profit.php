@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.13
+ * Version: 1.5.14
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1409,6 +1409,79 @@ final class SPVS_Cost_Profit {
         ksort( $monthly_data );
 
         foreach ( $monthly_data as $data ) {
+            $results[] = (object) $data;
+        }
+
+        return $results;
+    }
+
+    private function get_daily_profit_data( $start_date = null, $end_date = null ) {
+        global $wpdb;
+
+        // Default to current month if no dates provided
+        if ( ! $start_date ) {
+            $start_date = date( 'Y-m-01' );
+        }
+        if ( ! $end_date ) {
+            $end_date = date( 'Y-m-t' );
+        }
+
+        // Use WooCommerce order query for accurate revenue matching Analytics
+        $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) );
+
+        // Get orders using WooCommerce query
+        $args = array(
+            'limit'        => -1,
+            'status'       => $order_statuses,
+            'date_created' => $start_date . '...' . $end_date,
+            'return'       => 'ids',
+        );
+
+        $order_ids = wc_get_orders( $args );
+
+        // Group orders by day
+        $daily_data = array();
+
+        foreach ( $order_ids as $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) continue;
+
+            $date = $order->get_date_created();
+            if ( ! $date ) continue;
+
+            $day = $date->format( 'Y-m-d' );
+
+            if ( ! isset( $daily_data[ $day ] ) ) {
+                $daily_data[ $day ] = array(
+                    'date'          => $day,
+                    'order_count'   => 0,
+                    'total_profit'  => 0,
+                    'total_revenue' => 0,
+                );
+            }
+
+            // Get gross sales (this matches WooCommerce Analytics "Gross sales")
+            // Gross Sales = Sum of line item subtotals (products BEFORE discounts)
+            $revenue = 0;
+            foreach ( $order->get_items() as $item ) {
+                // get_subtotal() returns line item price BEFORE discounts/coupons
+                $revenue += (float) $item->get_subtotal();
+            }
+
+            // Get profit from meta
+            $profit = get_post_meta( $order_id, self::ORDER_TOTAL_PROFIT_META, true );
+            $profit = $profit !== '' ? (float) $profit : 0;
+
+            $daily_data[ $day ]['order_count']++;
+            $daily_data[ $day ]['total_revenue'] += $revenue;
+            $daily_data[ $day ]['total_profit'] += $profit;
+        }
+
+        // Convert to objects for consistency
+        $results = array();
+        ksort( $daily_data );
+
+        foreach ( $daily_data as $data ) {
             $results[] = (object) $data;
         }
 
