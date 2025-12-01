@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.5-debug
+ * Version: 1.9.6-debug
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -932,6 +932,8 @@ final class SPVS_Cost_Profit {
     }
 
     private function render_reports_tab() {
+        global $wpdb;
+
         // Get parameters
         $grouping = isset( $_GET['grouping'] ) ? sanitize_text_field( $_GET['grouping'] ) : 'monthly';
         if ( ! in_array( $grouping, array( 'daily', 'monthly', 'yearly' ), true ) ) {
@@ -951,6 +953,38 @@ final class SPVS_Cost_Profit {
 
         $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : $default_start;
         $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : $default_end;
+
+        // Collect debug info BEFORE running main query
+        $debug_info = array();
+        $orders_table = $wpdb->prefix . 'wc_orders';
+        $orders_meta_table = $wpdb->prefix . 'wc_orders_meta';
+        $hpos_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
+        $debug_info['hpos_enabled'] = $hpos_exists ? 'Yes' : 'No';
+
+        if ( $hpos_exists ) {
+            $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) );
+            $hpos_statuses = array_map( function( $status ) { return str_replace( 'wc-', '', $status ); }, $order_statuses );
+            $hpos_status_list = "'" . implode( "','", array_map( 'esc_sql', $hpos_statuses ) ) . "'";
+            $debug_info['searching_statuses'] = implode( ', ', $hpos_statuses );
+
+            $total_orders = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$orders_table} WHERE status IN ($hpos_status_list) AND DATE(date_created_gmt) >= %s AND DATE(date_created_gmt) <= %s",
+                $start_date, $end_date
+            ) );
+            $debug_info['total_orders'] = $total_orders;
+
+            $orders_with_profit = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(DISTINCT o.id) FROM {$orders_table} o INNER JOIN {$orders_meta_table} om ON o.id = om.order_id WHERE om.meta_key = %s AND o.status IN ($hpos_status_list) AND DATE(o.date_created_gmt) >= %s AND DATE(o.date_created_gmt) <= %s",
+                self::ORDER_TOTAL_PROFIT_META, $start_date, $end_date
+            ) );
+            $debug_info['orders_with_profit'] = $orders_with_profit;
+
+            $total_revenue = $wpdb->get_var( $wpdb->prepare(
+                "SELECT SUM(total_amount) FROM {$orders_table} WHERE status IN ($hpos_status_list) AND DATE(date_created_gmt) >= %s AND DATE(date_created_gmt) <= %s",
+                $start_date, $end_date
+            ) );
+            $debug_info['total_revenue'] = wc_price( (float) $total_revenue );
+        }
 
         $report_data = $this->get_profit_data_by_period( $start_date, $end_date, $grouping );
 
@@ -987,7 +1021,42 @@ final class SPVS_Cost_Profit {
         echo '</div>';
 
         if ( empty( $report_data ) ) {
-            echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
+            echo '<div class="notice notice-warning"><p><strong>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</strong></p></div>';
+
+            // Show debug information
+            echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid #ff8c00;">';
+            echo '<h3 style="margin-top: 0;">🔍 Debug Information</h3>';
+            echo '<table class="widefat striped" style="max-width: 600px;"><tbody>';
+            echo '<tr><td><strong>Date Range:</strong></td><td>' . esc_html( $start_date ) . ' to ' . esc_html( $end_date ) . '</td></tr>';
+            echo '<tr><td><strong>HPOS Enabled:</strong></td><td>' . esc_html( $debug_info['hpos_enabled'] ) . '</td></tr>';
+
+            if ( isset( $debug_info['searching_statuses'] ) ) {
+                echo '<tr><td><strong>Searching Order Statuses:</strong></td><td>' . esc_html( $debug_info['searching_statuses'] ) . '</td></tr>';
+                echo '<tr><td><strong>Total Orders Found:</strong></td><td>' . esc_html( $debug_info['total_orders'] ) . '</td></tr>';
+                echo '<tr><td><strong>Orders With Profit Metadata:</strong></td><td>' . esc_html( $debug_info['orders_with_profit'] ) . '</td></tr>';
+                echo '<tr><td><strong>Total Revenue (Orders):</strong></td><td>' . wp_kses_post( $debug_info['total_revenue'] ) . '</td></tr>';
+            }
+
+            echo '</tbody></table>';
+
+            // Show the problem and solution
+            if ( isset( $debug_info['total_orders'] ) && $debug_info['total_orders'] > 0 && $debug_info['orders_with_profit'] == 0 ) {
+                echo '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 4px;">';
+                echo '<h4 style="margin-top: 0;">⚠️ Problem Found: Missing Profit Data</h4>';
+                echo '<p>You have <strong>' . esc_html( $debug_info['total_orders'] ) . ' orders</strong> in this date range, but <strong>NONE have profit metadata</strong> calculated.</p>';
+                echo '<p><strong>Why:</strong> This plugin only calculates profit for new orders at checkout. Your existing orders need to be recalculated.</p>';
+                echo '<p><strong>Solution:</strong> We need to add a "Bulk Recalculate" feature to calculate profit for all your existing orders.</p>';
+                echo '<p style="margin-bottom: 0;"><strong>Revenue shows:</strong> ' . wp_kses_post( $debug_info['total_revenue'] ) . ' total for this period (but no profit data yet).</p>';
+                echo '</div>';
+            } elseif ( isset( $debug_info['total_orders'] ) && $debug_info['total_orders'] == 0 ) {
+                echo '<div style="background: #fff3cd; border: 1px solid #ffc107; padding: 15px; margin: 15px 0; border-radius: 4px;">';
+                echo '<h4 style="margin-top: 0;">ℹ️ No Orders Found</h4>';
+                echo '<p>There are no orders with status <strong>' . esc_html( $debug_info['searching_statuses'] ) . '</strong> in the date range ' . esc_html( $start_date ) . ' to ' . esc_html( $end_date ) . '.</p>';
+                echo '<p style="margin-bottom: 0;">Check that your orders have the correct status and date.</p>';
+                echo '</div>';
+            }
+
+            echo '</div>';
             return;
         }
 
