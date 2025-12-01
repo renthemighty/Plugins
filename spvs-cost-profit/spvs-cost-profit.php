@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.8-debug
+ * Version: 1.9.9
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -713,45 +713,28 @@ final class SPVS_Cost_Profit {
         $legacy_statuses = array_map( 'esc_sql', $order_statuses );
         $legacy_status_list = "'" . implode( "','", $legacy_statuses ) . "'";
 
-        // HPOS compatible query
+        // HPOS compatible query - but check if it actually has data first
         if ( function_exists( 'wc_get_container' ) ) {
             try {
                 $orders_table = $wpdb->prefix . 'wc_orders';
                 $orders_meta_table = $wpdb->prefix . 'wc_orders_meta';
 
-                // Check if HPOS tables exist
+                // Check if HPOS tables exist AND have data
                 $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
+                $has_data = false;
 
                 if ( $table_exists ) {
+                    $order_count = $wpdb->get_var( "SELECT COUNT(*) FROM {$orders_table}" );
+                    $has_data = ( $order_count > 0 );
+                    error_log( "SPVS DEBUG: HPOS table exists with $order_count orders" );
+                }
+
+                if ( $table_exists && $has_data ) {
                     // CRITICAL FIX: HPOS stores statuses WITHOUT 'wc-' prefix
                     $hpos_statuses = array_map( function( $status ) {
                         return esc_sql( str_replace( 'wc-', '', $status ) );
                     }, $order_statuses );
                     $hpos_status_list = "'" . implode( "','", $hpos_statuses ) . "'";
-
-                    // DEBUG: Check how many orders exist in date range
-                    $debug_count = $wpdb->get_var( $wpdb->prepare(
-                        "SELECT COUNT(*) FROM {$orders_table}
-                        WHERE status IN ($hpos_status_list)
-                        AND DATE(date_created_gmt) >= %s
-                        AND DATE(date_created_gmt) <= %s",
-                        $start_date,
-                        $end_date
-                    ) );
-                    error_log( "SPVS DEBUG: Found $debug_count orders in HPOS for date range $start_date to $end_date with statuses: " . implode(', ', $hpos_statuses) );
-
-                    // DEBUG: Check orders with profit metadata
-                    $debug_profit_count = $wpdb->get_var( $wpdb->prepare(
-                        "SELECT COUNT(DISTINCT o.id) FROM {$orders_table} o
-                        INNER JOIN {$orders_meta_table} om ON o.id = om.order_id AND om.meta_key = %s
-                        WHERE o.status IN ($hpos_status_list)
-                        AND DATE(o.date_created_gmt) >= %s
-                        AND DATE(o.date_created_gmt) <= %s",
-                        self::ORDER_TOTAL_PROFIT_META,
-                        $start_date,
-                        $end_date
-                    ) );
-                    error_log( "SPVS DEBUG: Found $debug_profit_count orders with profit metadata (_spvs_total_profit)" );
 
                     $query = $wpdb->prepare(
                         "SELECT
@@ -771,26 +754,22 @@ final class SPVS_Cost_Profit {
                         $end_date
                     );
 
-                    error_log( "SPVS DEBUG: Executing query: " . $query );
+                    error_log( "SPVS DEBUG: Using HPOS query" );
 
                     $results = $wpdb->get_results( $query );
 
-                    // Check for SQL errors
                     if ( $wpdb->last_error ) {
                         error_log( 'SPVS Profit Report HPOS Query Error: ' . $wpdb->last_error );
-                        error_log( 'SPVS Profit Report Query: ' . $query );
                     }
 
-                    error_log( 'SPVS DEBUG: Query returned ' . ( is_array( $results ) ? count( $results ) : 0 ) . ' result rows' );
-
                     if ( is_array( $results ) ) {
-                        // Calculate total cost for each period
                         foreach ( $results as $row ) {
                             $row->total_cost = ( (float) $row->total_revenue ) - ( (float) $row->total_profit );
-                            error_log( "SPVS DEBUG: Period {$row->period} - Orders: {$row->order_count}, Revenue: {$row->total_revenue}, Profit: {$row->total_profit}" );
                         }
                         return $results;
                     }
+                } else {
+                    error_log( "SPVS DEBUG: HPOS empty or unavailable, falling back to legacy query" );
                 }
             } catch ( Exception $e ) {
                 error_log( 'SPVS Profit Report HPOS Exception: ' . $e->getMessage() );
