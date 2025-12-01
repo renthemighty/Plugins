@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.4
+ * Version: 1.5.5
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -469,27 +469,42 @@ final class SPVS_Cost_Profit {
             if ( ! $q->have_posts() ) break;
 
             foreach ( $q->posts as $pid ) {
-                $product = wc_get_product( $pid ); if ( ! $product ) continue;
+                $product = wc_get_product( $pid );
+                if ( ! $product ) continue;
                 $processed++;
 
                 // Only count products with stock management enabled
-                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 0;
-                if ( $product->managing_stock() ) $managed++;
+                if ( ! $product->managing_stock() ) {
+                    delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                    delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                    continue;
+                }
+
+                $managed++;
+                $qty = (int) $product->get_stock_quantity();
+
                 if ( $qty > 0 ) $qty_gt0++;
 
-                // Skip products without stock management OR with zero/negative quantity
+                // Skip products with zero/negative quantity
                 if ( $qty <= 0 ) {
                     delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
                     delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
                     continue;
                 }
 
-                // Get cost and price
+                // Get cost and price - use get_price() for actual selling price (handles sale prices)
                 $unit_cost = (float) $this->get_product_cost( $pid );
-                $reg_price = (float) $product->get_regular_price();
+                $sell_price = (float) $product->get_price(); // Active selling price (sale or regular)
+
+                // Skip if no valid price
+                if ( $sell_price <= 0 ) {
+                    delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                    delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                    continue;
+                }
 
                 $line_cost   = $unit_cost * $qty;
-                $line_retail = $reg_price * $qty;
+                $line_retail = $sell_price * $qty;
 
                 update_post_meta( $pid, self::PRODUCT_COST_TOTAL_META, wc_format_decimal( $line_cost, wc_get_price_decimals() ) );
                 update_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META, wc_format_decimal( $line_retail, wc_get_price_decimals() ) );
