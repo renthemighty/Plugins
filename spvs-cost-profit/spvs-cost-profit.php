@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.1
+ * Version: 1.5.2
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -911,7 +911,7 @@ final class SPVS_Cost_Profit {
             $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
             $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
 
-            // Always overwrite with COG cost (user requested full overwrite)
+            // Always overwrite with COG cost (fallback non-AJAX method defaults to overwrite)
             update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
 
             // Track if this was new or updated
@@ -953,8 +953,24 @@ final class SPVS_Cost_Profit {
         global $wpdb;
 
         $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+        $overwrite = isset( $_POST['overwrite'] ) && $_POST['overwrite'] === '1';
+        $delete_after = isset( $_POST['delete_after'] ) && $_POST['delete_after'] === '1';
         $batch_size = 10; // Process 10 at a time
         $is_first_batch = ( $offset === 0 );
+
+        // Store options in transient for subsequent batches
+        if ( $is_first_batch ) {
+            set_transient( 'spvs_cog_import_options', array(
+                'overwrite' => $overwrite,
+                'delete_after' => $delete_after
+            ), HOUR_IN_SECONDS );
+        } else {
+            $options = get_transient( 'spvs_cog_import_options' );
+            if ( $options ) {
+                $overwrite = $options['overwrite'];
+                $delete_after = $options['delete_after'];
+            }
+        }
 
         // Create backup on first batch
         if ( $is_first_batch ) {
@@ -1008,14 +1024,28 @@ final class SPVS_Cost_Profit {
             $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
             $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
 
-            // Always overwrite with COG cost (user requested full overwrite)
-            update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
-
-            // Track if this was new or updated
-            if ( $existing_cost && $existing_cost !== '' ) {
-                $updated++;
+            // Import logic based on overwrite option
+            if ( $overwrite ) {
+                // Always overwrite existing costs
+                update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                if ( $existing_cost && $existing_cost !== '' ) {
+                    $updated++;
+                } else {
+                    $imported++;
+                }
             } else {
-                $imported++;
+                // Only import if no existing cost
+                if ( ! $existing_cost || $existing_cost === '' || $existing_cost === '0' ) {
+                    update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                    $imported++;
+                } else {
+                    $skipped++;
+                }
+            }
+
+            // Delete COG data if requested (per product)
+            if ( $delete_after ) {
+                delete_post_meta( $product_id, '_wc_cog_cost' );
             }
         }
 
@@ -1026,6 +1056,7 @@ final class SPVS_Cost_Profit {
         if ( $is_complete ) {
             $this->recalculate_inventory_totals();
             delete_transient( 'spvs_cog_import_total' );
+            delete_transient( 'spvs_cog_import_options' );
         }
 
         wp_send_json_success( array(
@@ -1711,9 +1742,25 @@ final class SPVS_Cost_Profit {
             echo '<li>' . esc_html__( 'Creates automatic backup before import', 'spvs-cost-profit' ) . '</li>';
             echo '<li>' . esc_html__( 'Imports costs from WooCommerce Cost of Goods (_wc_cog_cost)', 'spvs-cost-profit' ) . '</li>';
             echo '<li>' . esc_html__( 'Skips only zero or empty COG values', 'spvs-cost-profit' ) . '</li>';
-            echo '<li><strong>' . esc_html__( 'Overwrites ALL existing costs with COG data', 'spvs-cost-profit' ) . '</strong></li>';
             echo '<li>' . esc_html__( 'Recalculates inventory totals after import', 'spvs-cost-profit' ) . '</li>';
             echo '</ul>';
+
+            // Import Options
+            echo '<div style="background:#fff; border:1px solid #ddd; padding:15px; margin:15px 0; border-radius:5px;">';
+            echo '<h4 style="margin-top:0;">' . esc_html__( 'Import Options', 'spvs-cost-profit' ) . '</h4>';
+
+            echo '<label style="display:block; margin:10px 0;">';
+            echo '<input type="checkbox" id="spvs-cog-overwrite" checked /> ';
+            echo '<strong>' . esc_html__( 'Overwrite existing costs', 'spvs-cost-profit' ) . '</strong>';
+            echo '<br/><span style="color:#666; font-size:13px; margin-left:20px;">' . esc_html__( 'Replace all existing cost data with COG values. If unchecked, only imports products without existing costs.', 'spvs-cost-profit' ) . '</span>';
+            echo '</label>';
+
+            echo '<label style="display:block; margin:10px 0;">';
+            echo '<input type="checkbox" id="spvs-cog-delete-after" /> ';
+            echo '<strong>' . esc_html__( 'Delete Cost of Goods data after import', 'spvs-cost-profit' ) . '</strong>';
+            echo '<br/><span style="color:#666; font-size:13px; margin-left:20px;">' . esc_html__( 'Remove _wc_cog_cost meta data after successful import to avoid data duplication.', 'spvs-cost-profit' ) . '</span>';
+            echo '</label>';
+            echo '</div>';
 
             echo '<div style="margin-top:10px;">';
             echo '<button type="button" id="spvs-start-cog-import" class="button button-primary" style="background:#00a32a; border-color:#00a32a;">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';

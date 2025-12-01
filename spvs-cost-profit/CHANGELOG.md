@@ -2,6 +2,34 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.5.2] - 2024-12-01
+
+### Added
+- **Import Options UI** - User-selectable import behavior
+  - Checkbox: "Overwrite existing costs" (checked by default)
+  - Checkbox: "Delete Cost of Goods data after import" (optional cleanup)
+  - Confirmation dialog shows selected options before import
+  - Options stored and respected across all batch operations
+
+### Changed
+- Import behavior now respects user selection:
+  - **Overwrite ON:** Replaces all existing costs with COG data
+  - **Overwrite OFF:** Only imports products without existing costs
+- Import confirmation dialog now shows warnings based on selected options
+
+### Improved
+- Added COG data cleanup option to avoid data duplication
+- Deletes `_wc_cog_cost` meta after import if "Delete after import" is checked
+- More flexible import workflow - users control overwrite behavior
+- Better user experience with clear option explanations
+
+### Technical
+- New checkboxes: `#spvs-cog-overwrite` and `#spvs-cog-delete-after`
+- JavaScript passes options via AJAX: `overwrite` and `delete_after` parameters
+- Options stored in transient for consistency across batches
+- Per-product `delete_post_meta()` for `_wc_cog_cost` when delete_after enabled
+- Transients cleaned up on import completion
+
 ## [1.5.1] - 2024-12-01
 
 ### Changed

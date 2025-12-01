@@ -7,9 +7,26 @@ jQuery(document).ready(function($) {
     $(document).on('click', '#spvs-start-cog-import', function(e) {
         e.preventDefault();
 
-        if (!confirm('Import cost data from WooCommerce Cost of Goods? A backup will be created first.')) {
+        var overwrite = $('#spvs-cog-overwrite').is(':checked');
+        var deleteAfter = $('#spvs-cog-delete-after').is(':checked');
+
+        var confirmMsg = 'Import cost data from WooCommerce Cost of Goods? A backup will be created first.';
+        if (overwrite) {
+            confirmMsg += '\n\n⚠️ WARNING: This will OVERWRITE all existing costs with COG data.';
+        }
+        if (deleteAfter) {
+            confirmMsg += '\n\n🗑️ Cost of Goods data (_wc_cog_cost) will be DELETED after import.';
+        }
+
+        if (!confirm(confirmMsg)) {
             return;
         }
+
+        // Store options for use in batch processing
+        window.spvsImportOptions = {
+            overwrite: overwrite,
+            deleteAfter: deleteAfter
+        };
 
         // Show modal
         $('#spvs-import-modal').fadeIn();
@@ -31,7 +48,9 @@ jQuery(document).ready(function($) {
             data: {
                 action: 'spvs_cog_import_batch',
                 nonce: spvsCogImport.nonce,
-                offset: offset
+                offset: offset,
+                overwrite: window.spvsImportOptions.overwrite ? '1' : '0',
+                delete_after: window.spvsImportOptions.deleteAfter ? '1' : '0'
             },
             success: function(response) {
                 if (response.success) {
