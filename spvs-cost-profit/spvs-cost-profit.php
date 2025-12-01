@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.7.5
+ * Version: 1.7.6
  * Author: Megatron
  * License: GPL-2.0+
  */
@@ -261,7 +261,7 @@ final class SPVS_Cost_Profit_V2 {
                         return;
                     }
 
-                    if (!confirm('This will recalculate ALL orders in batches of 50. This is safe for large stores and prevents server overload. Continue?')) {
+                    if (!confirm('This will recalculate ALL orders in batches of 50 with 1 second delay between batches. This is safe for large stores and prevents server overload. Continue?')) {
                         return;
                     }
 
@@ -299,10 +299,10 @@ final class SPVS_Cost_Profit_V2 {
                                     $('#spvs-progress-bar').css('width', data.percentage + '%').text(data.percentage + '%');
                                     $('#spvs-progress-message').text(data.message);
 
-                                    // Wait 500ms before next batch (rate limiting)
+                                    // Wait 1000ms (1 second) before next batch (rate limiting)
                                     setTimeout(function() {
                                         processBatch(data.processed, data.total);
-                                    }, 500);
+                                    }, 1000);
                                 }
                             } else {
                                 alert('Error: ' + (response.data ? response.data.message : 'Unknown error'));
