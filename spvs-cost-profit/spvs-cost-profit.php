@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.3
+ * Version: 1.5.4
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -455,7 +455,7 @@ final class SPVS_Cost_Profit {
 
         $batch_size = 250; $paged = 1;
         $tcop_total = 0.0; $retail_total = 0.0;
-        $processed = 0; $managed = 0; $qty_gt0 = 0; $with_cost = 0;
+        $processed = 0; $managed = 0; $qty_gt0 = 0;
 
         while ( true ) {
             $q = new WP_Query( array(
@@ -472,30 +472,22 @@ final class SPVS_Cost_Profit {
                 $product = wc_get_product( $pid ); if ( ! $product ) continue;
                 $processed++;
 
-                // Get unit cost - if no cost set, skip this product
-                $unit_cost = (float) $this->get_product_cost( $pid );
-                if ( $unit_cost <= 0 ) {
+                // Only count products with stock management enabled
+                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 0;
+                if ( $product->managing_stock() ) $managed++;
+                if ( $qty > 0 ) $qty_gt0++;
+
+                // Skip products without stock management OR with zero/negative quantity
+                if ( $qty <= 0 ) {
                     delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
                     delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
                     continue;
                 }
 
-                $with_cost++;
-
-                // Get quantity - use stock quantity if managed, otherwise default to 1 for valuation
-                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 1;
-                if ( $product->managing_stock() ) {
-                    $managed++;
-                    if ( $qty > 0 ) $qty_gt0++;
-                    // If stock managed but qty is 0, skip from totals
-                    if ( $qty <= 0 ) {
-                        delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
-                        delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
-                        continue;
-                    }
-                }
-
+                // Get cost and price
+                $unit_cost = (float) $this->get_product_cost( $pid );
                 $reg_price = (float) $product->get_regular_price();
+
                 $line_cost   = $unit_cost * $qty;
                 $line_retail = $reg_price * $qty;
 
@@ -510,13 +502,12 @@ final class SPVS_Cost_Profit {
         }
 
         update_option( self::INVENTORY_TOTALS_OPTION, array(
-            'tcop'      => wc_format_decimal( $tcop_total, wc_get_price_decimals() ),
-            'retail'    => wc_format_decimal( $retail_total, wc_get_price_decimals() ),
-            'count'     => (int) $processed,
-            'managed'   => (int) $managed,
-            'qty_gt0'   => (int) $qty_gt0,
-            'with_cost' => (int) $with_cost,
-            'updated'   => time(),
+            'tcop'    => wc_format_decimal( $tcop_total, wc_get_price_decimals() ),
+            'retail'  => wc_format_decimal( $retail_total, wc_get_price_decimals() ),
+            'count'   => (int) $processed,
+            'managed' => (int) $managed,
+            'qty_gt0' => (int) $qty_gt0,
+            'updated' => time(),
         ), false );
     }
 
@@ -1113,12 +1104,24 @@ final class SPVS_Cost_Profit {
 
         // Get total count (cache it for subsequent batches)
         if ( $is_first_batch ) {
-            $total = (int) wc_orders_count( apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
+            // Count orders using wc_get_orders with limit=-1 and return=ids
+            $all_order_ids = wc_get_orders( array(
+                'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
+                'limit'  => -1,
+                'return' => 'ids',
+            ) );
+            $total = count( $all_order_ids );
             set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
         } else {
             $total = (int) get_transient( 'spvs_recalc_total' );
             if ( ! $total ) {
-                $total = (int) wc_orders_count( apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
+                // Recalculate if transient expired
+                $all_order_ids = wc_get_orders( array(
+                    'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
+                    'limit'  => -1,
+                    'return' => 'ids',
+                ) );
+                $total = count( $all_order_ids );
             }
         }
 

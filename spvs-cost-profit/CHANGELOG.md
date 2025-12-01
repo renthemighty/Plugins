@@ -2,6 +2,23 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.5.4] - 2024-12-01
+
+### Fixed
+- **TCOP Calculation** - Reverted to only count products with stock management enabled AND quantity > 0
+  - TCOP = Total cost of products in stock (managed stock with qty > 0)
+  - Retail = Total retail value of products in stock (managed stock with qty > 0)
+  - Spread = Retail - TCOP
+  - Products without stock management or with zero quantity are NOT counted
+- **Order Recalculation Network Error** - Fixed `wc_orders_count()` undefined function error
+  - Now uses `wc_get_orders()` with `return => 'ids'` to count orders
+  - Properly caches total count in transient for batch processing
+
+### Technical
+- Removed `with_cost` counter from inventory totals option
+- Updated order recalculation to use standard WooCommerce functions
+- Simplified TCOP calculation logic back to original stock-based approach
+
 ## [1.5.3] - 2024-12-01
 
 ### Added
