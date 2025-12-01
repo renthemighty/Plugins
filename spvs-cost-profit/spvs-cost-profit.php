@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.8.8
+ * Version: 1.9.0
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -91,8 +91,8 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_post_spvs_cost_import_misses', array( $this, 'download_cost_import_misses' ) );
         add_action( 'admin_post_spvs_cost_missing_csv', array( $this, 'download_missing_cost_csv' ) );
 
-        /** Monthly profit report export */
-        add_action( 'admin_post_spvs_export_monthly_profit', array( $this, 'export_monthly_profit_csv' ) );
+        /** Profit report export */
+        add_action( 'admin_post_spvs_export_profit_report', array( $this, 'export_profit_report_csv' ) );
 
         /** COG Import (server-side, no AJAX) */
         add_action( 'admin_post_spvs_import_cog', array( $this, 'import_cog_costs' ) );
@@ -110,7 +110,7 @@ final class SPVS_Cost_Profit {
 
     /** ---------------- Admin assets ---------------- */
     public function enqueue_admin_assets( $hook ) {
-        if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook ) {
+        if ( 'woocommerce_page_spvs-dashboard' === $hook ) {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
         }
@@ -452,7 +452,7 @@ final class SPVS_Cost_Profit {
         }
 
         $msg = sprintf( 'cog_import_done:%d:%d:%d', $imported, $updated, $skipped );
-        wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) );
+        wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'import', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) );
         exit;
     }
 
@@ -528,14 +528,14 @@ final class SPVS_Cost_Profit {
         if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'You do not have permission to import costs.', 'spvs-cost-profit' ) );
         check_admin_referer( 'spvs_import_costs_csv' );
 
-        if ( empty( $_FILES['spvs_costs_file']['tmp_name'] ) ) { wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => 'no_file' ), admin_url( 'admin.php' ) ) ); exit; }
+        if ( empty( $_FILES['spvs_costs_file']['tmp_name'] ) ) { wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'import', 'spvs_msg' => 'no_file' ), admin_url( 'admin.php' ) ) ); exit; }
         $tmp = $_FILES['spvs_costs_file']['tmp_name'];
         $fh = fopen( $tmp, 'r' );
-        if ( ! $fh ) { wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => 'open_fail' ), admin_url( 'admin.php' ) ) ); exit; }
+        if ( ! $fh ) { wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'import', 'spvs_msg' => 'open_fail' ), admin_url( 'admin.php' ) ) ); exit; }
 
         $header = fgetcsv( $fh ); if ( ! is_array( $header ) ) { $header = array(); }
         $header = array_map( 'sanitize_key', $header );
-        if ( ! in_array( 'cost', $header, true ) ) { fclose( $fh ); wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => 'missing_cost_col' ), admin_url( 'admin.php' ) ) ); exit; }
+        if ( ! in_array( 'cost', $header, true ) ) { fclose( $fh ); wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'import', 'spvs_msg' => 'missing_cost_col' ), admin_url( 'admin.php' ) ) ); exit; }
 
         $updated = 0; $skipped = 0; $errors = 0; $total = 0; $misses = array();
         while ( ( $row = fgetcsv( $fh ) ) !== false ) {
@@ -564,7 +564,7 @@ final class SPVS_Cost_Profit {
         if ( $recalc ) { $this->recalculate_inventory_totals(); }
 
         $msg = sprintf( 'import_done:%d:%d:%d:%d', $total, $updated, $skipped, $errors );
-        wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) ); exit;
+        wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'import', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) ); exit;
     }
 
     /** ---------------- Column helpers for CSV/Preview ---------------- */
@@ -676,16 +676,31 @@ final class SPVS_Cost_Profit {
         return $row;
     }
 
-    /** --------------- Monthly profit reports --------------- */
-    private function get_monthly_profit_data( $start_date = null, $end_date = null ) {
+    /** --------------- Profit reports with flexible grouping --------------- */
+    private function get_profit_data_by_period( $start_date = null, $end_date = null, $grouping = 'monthly' ) {
         global $wpdb;
 
-        // Default to last 12 months if no dates provided
+        // Default date range
         if ( ! $start_date ) {
-            $start_date = date( 'Y-m-01', strtotime( '-11 months' ) );
+            if ( 'daily' === $grouping ) {
+                $start_date = date( 'Y-m-d', strtotime( '-30 days' ) );
+            } elseif ( 'yearly' === $grouping ) {
+                $start_date = date( 'Y-01-01', strtotime( '-4 years' ) );
+            } else {
+                $start_date = date( 'Y-m-01', strtotime( '-11 months' ) );
+            }
         }
         if ( ! $end_date ) {
-            $end_date = date( 'Y-m-t' );
+            $end_date = date( 'Y-m-d' );
+        }
+
+        // Set date format based on grouping
+        $date_format = '%Y-%m'; // monthly default
+        $group_label = 'period';
+        if ( 'daily' === $grouping ) {
+            $date_format = '%Y-%m-%d';
+        } elseif ( 'yearly' === $grouping ) {
+            $date_format = '%Y';
         }
 
         // Query orders with profit data
@@ -697,6 +712,8 @@ final class SPVS_Cost_Profit {
             try {
                 $orders_table = $wpdb->prefix . 'wc_orders';
                 $orders_meta_table = $wpdb->prefix . 'wc_orders_meta';
+                $order_items_table = $wpdb->prefix . 'woocommerce_order_items';
+                $order_itemmeta_table = $wpdb->prefix . 'woocommerce_order_itemmeta';
 
                 // Check if HPOS tables exist
                 $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
@@ -704,7 +721,7 @@ final class SPVS_Cost_Profit {
                 if ( $table_exists ) {
                     $query = $wpdb->prepare(
                         "SELECT
-                            DATE_FORMAT(o.date_created_gmt, '%%Y-%%m') as month,
+                            DATE_FORMAT(o.date_created_gmt, '$date_format') as period,
                             COUNT(DISTINCT o.id) as order_count,
                             SUM(CAST(om.meta_value AS DECIMAL(10,2))) as total_profit,
                             SUM(o.total_amount) as total_revenue
@@ -713,8 +730,8 @@ final class SPVS_Cost_Profit {
                         WHERE o.status IN ($status_list)
                         AND o.date_created_gmt >= %s
                         AND o.date_created_gmt <= %s
-                        GROUP BY month
-                        ORDER BY month ASC",
+                        GROUP BY period
+                        ORDER BY period ASC",
                         self::ORDER_TOTAL_PROFIT_META,
                         $start_date . ' 00:00:00',
                         $end_date . ' 23:59:59'
@@ -722,6 +739,10 @@ final class SPVS_Cost_Profit {
 
                     $results = $wpdb->get_results( $query );
                     if ( $results ) {
+                        // Calculate total cost for each period
+                        foreach ( $results as $row ) {
+                            $row->total_cost = ( (float) $row->total_revenue ) - ( (float) $row->total_profit );
+                        }
                         return $results;
                     }
                 }
@@ -733,7 +754,7 @@ final class SPVS_Cost_Profit {
         // Legacy post-based orders query
         $query = $wpdb->prepare(
             "SELECT
-                DATE_FORMAT(p.post_date, '%%Y-%%m') as month,
+                DATE_FORMAT(p.post_date, '$date_format') as period,
                 COUNT(DISTINCT p.ID) as order_count,
                 SUM(CAST(pm.meta_value AS DECIMAL(10,2))) as total_profit,
                 SUM(CAST(pm2.meta_value AS DECIMAL(10,2))) as total_revenue
@@ -744,43 +765,51 @@ final class SPVS_Cost_Profit {
             AND p.post_status IN ($status_list)
             AND p.post_date >= %s
             AND p.post_date <= %s
-            GROUP BY month
-            ORDER BY month ASC",
+            GROUP BY period
+            ORDER BY period ASC",
             self::ORDER_TOTAL_PROFIT_META,
             $start_date . ' 00:00:00',
             $end_date . ' 23:59:59'
         );
 
-        return $wpdb->get_results( $query );
+        $results = $wpdb->get_results( $query );
+        // Calculate total cost for each period
+        foreach ( $results as $row ) {
+            $row->total_cost = ( (float) $row->total_revenue ) - ( (float) $row->total_profit );
+        }
+        return $results;
     }
 
-    public function export_monthly_profit_csv() {
+    public function export_profit_report_csv() {
         if ( ! current_user_can( 'read' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
-        check_admin_referer( 'spvs_export_monthly_profit' );
+        check_admin_referer( 'spvs_export_profit_report' );
 
-        $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01', strtotime( '-11 months' ) );
-        $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-t' );
+        $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : '';
+        $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : '';
+        $grouping = isset( $_GET['grouping'] ) ? sanitize_text_field( $_GET['grouping'] ) : 'monthly';
 
-        $data = $this->get_monthly_profit_data( $start_date, $end_date );
+        $data = $this->get_profit_data_by_period( $start_date, $end_date, $grouping );
 
-        $filename = 'monthly-profit-' . date( 'Ymd-His' ) . '.csv';
+        $filename = 'profit-report-' . $grouping . '-' . date( 'Ymd-His' ) . '.csv';
         header( 'Content-Type: text/csv; charset=utf-8' );
         header( 'Content-Disposition: attachment; filename=' . $filename );
 
         $out = fopen( 'php://output', 'w' );
-        fputcsv( $out, array( 'Month', 'Orders', 'Total Revenue', 'Total Profit', 'Profit Margin %', 'Avg Profit/Order' ) );
+        fputcsv( $out, array( 'Period', 'Orders', 'Revenue', 'Cost', 'Profit', 'Margin %', 'Avg Profit/Order' ) );
 
         foreach ( $data as $row ) {
             $revenue = (float) $row->total_revenue;
             $profit = (float) $row->total_profit;
+            $cost = (float) $row->total_cost;
             $orders = (int) $row->order_count;
             $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
             $avg_profit = $orders > 0 ? $profit / $orders : 0;
 
             fputcsv( $out, array(
-                $row->month,
+                $row->period,
                 $orders,
                 number_format( $revenue, 2, '.', '' ),
+                number_format( $cost, 2, '.', '' ),
                 number_format( $profit, 2, '.', '' ),
                 number_format( $margin, 2, '.', '' ),
                 number_format( $avg_profit, 2, '.', '' ),
@@ -795,208 +824,280 @@ final class SPVS_Cost_Profit {
     public function register_admin_pages() {
         add_submenu_page(
             'woocommerce',
-            __( 'SPVS Inventory Value', 'spvs-cost-profit' ),
-            __( 'SPVS Inventory', 'spvs-cost-profit' ),
+            __( 'SPVS Dashboard', 'spvs-cost-profit' ),
+            __( 'SPVS Dashboard', 'spvs-cost-profit' ),
             'read',
-            'spvs-inventory',
-            array( $this, 'render_inventory_admin_page' )
-        );
-
-        add_submenu_page(
-            'woocommerce',
-            __( 'SPVS Profit Reports', 'spvs-cost-profit' ),
-            __( 'SPVS Profit Reports', 'spvs-cost-profit' ),
-            'read',
-            'spvs-profit-reports',
-            array( $this, 'render_profit_reports_page' )
+            'spvs-dashboard',
+            array( $this, 'render_dashboard_page' )
         );
     }
 
-    public function render_profit_reports_page() {
+    public function render_dashboard_page() {
         if ( ! current_user_can( 'read' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
 
-        // Get date range from request or default to last 12 months
-        $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01', strtotime( '-11 months' ) );
-        $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-t' );
-
-        // Calculate date difference in days
-        $start_timestamp = strtotime( $start_date );
-        $end_timestamp = strtotime( $end_date );
-        $date_diff_days = ( $end_timestamp - $start_timestamp ) / ( 60 * 60 * 24 );
-        $show_detailed_table = ( $date_diff_days <= 90 ); // Only show table if 3 months or less
-
-        $monthly_data = $this->get_monthly_profit_data( $start_date, $end_date );
-
-        $export_url = add_query_arg( array(
-            'action'     => 'spvs_export_monthly_profit',
-            '_wpnonce'   => wp_create_nonce( 'spvs_export_monthly_profit' ),
-            'start_date' => $start_date,
-            'end_date'   => $end_date,
-        ), admin_url( 'admin-post.php' ) );
+        // Get active tab
+        $active_tab = isset( $_GET['tab'] ) ? sanitize_text_field( $_GET['tab'] ) : 'reports';
 
         echo '<div class="wrap">';
-        echo '<h1>' . esc_html__( 'Monthly Profit Reports', 'spvs-cost-profit' ) . '</h1>';
+        echo '<h1>' . esc_html__( 'SPVS Cost & Profit Dashboard', 'spvs-cost-profit' ) . '</h1>';
 
-        // Date range selector
-        echo '<form method="get" style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc; display: inline-block;">';
-        echo '<input type="hidden" name="page" value="spvs-profit-reports" />';
-        echo '<label><strong>' . esc_html__( 'Start Date:', 'spvs-cost-profit' ) . '</strong> ';
-        echo '<input type="date" name="start_date" value="' . esc_attr( $start_date ) . '" /></label> ';
-        echo '<label style="margin-left: 15px;"><strong>' . esc_html__( 'End Date:', 'spvs-cost-profit' ) . '</strong> ';
-        echo '<input type="date" name="end_date" value="' . esc_attr( $end_date ) . '" /></label> ';
-        echo '<button class="button button-primary" style="margin-left: 15px;">' . esc_html__( 'Update', 'spvs-cost-profit' ) . '</button> ';
-        echo '<a class="button" href="' . esc_url( $export_url ) . '" style="margin-left: 10px;">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
-        echo '</form>';
+        // Tab navigation
+        $tabs = array(
+            'reports'   => __( 'Profit Reports', 'spvs-cost-profit' ),
+            'inventory' => __( 'Inventory Value', 'spvs-cost-profit' ),
+            'import'    => __( 'Import/Export', 'spvs-cost-profit' ),
+        );
 
-        if ( empty( $monthly_data ) ) {
-            echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
-        } else {
-            // Prepare data for chart
-            $months = array();
-            $profits = array();
-            $revenues = array();
-            $total_profit = 0;
-            $total_revenue = 0;
+        echo '<h2 class="nav-tab-wrapper">';
+        foreach ( $tabs as $tab_key => $tab_label ) {
+            $active = ( $active_tab === $tab_key ) ? ' nav-tab-active' : '';
+            $url = add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => $tab_key ), admin_url( 'admin.php' ) );
+            echo '<a href="' . esc_url( $url ) . '" class="nav-tab' . esc_attr( $active ) . '">' . esc_html( $tab_label ) . '</a>';
+        }
+        echo '</h2>';
 
-            foreach ( $monthly_data as $row ) {
-                $months[] = $row->month;
-                $profit = (float) $row->total_profit;
-                $revenue = (float) $row->total_revenue;
-                $profits[] = $profit;
-                $revenues[] = $revenue;
-                $total_profit += $profit;
-                $total_revenue += $revenue;
-            }
-
-            // Summary cards
-            echo '<div style="display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap;">';
-
-            echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #2271b1; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
-            echo '<h3 style="margin: 0 0 10px 0; color: #666;">' . esc_html__( 'Total Profit', 'spvs-cost-profit' ) . '</h3>';
-            echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #2271b1;">' . wp_kses_post( wc_price( $total_profit ) ) . '</p>';
-            echo '</div>';
-
-            echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #00a32a; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
-            echo '<h3 style="margin: 0 0 10px 0; color: #666;">' . esc_html__( 'Total Revenue', 'spvs-cost-profit' ) . '</h3>';
-            echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #00a32a;">' . wp_kses_post( wc_price( $total_revenue ) ) . '</p>';
-            echo '</div>';
-
-            $avg_margin = $total_revenue > 0 ? ( $total_profit / $total_revenue ) * 100 : 0;
-            echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #d63638; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
-            echo '<h3 style="margin: 0 0 10px 0; color: #666;">' . esc_html__( 'Avg Margin', 'spvs-cost-profit' ) . '</h3>';
-            echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #d63638;">' . number_format( $avg_margin, 2 ) . '%</p>';
-            echo '</div>';
-
-            echo '</div>';
-
-            // Chart
-            echo '<div style="background: #fff; padding: 20px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
-            echo '<canvas id="spvs-profit-chart" style="max-height: 400px;"></canvas>';
-            echo '</div>';
-
-            // Data table - only show for date ranges 90 days or less
-            if ( $show_detailed_table ) {
-                echo '<table class="widefat striped" style="margin-top: 20px;">';
-                echo '<thead><tr>';
-                echo '<th>' . esc_html__( 'Month', 'spvs-cost-profit' ) . '</th>';
-                echo '<th>' . esc_html__( 'Orders', 'spvs-cost-profit' ) . '</th>';
-                echo '<th>' . esc_html__( 'Revenue', 'spvs-cost-profit' ) . '</th>';
-                echo '<th>' . esc_html__( 'Profit', 'spvs-cost-profit' ) . '</th>';
-                echo '<th>' . esc_html__( 'Margin %', 'spvs-cost-profit' ) . '</th>';
-                echo '<th>' . esc_html__( 'Avg Profit/Order', 'spvs-cost-profit' ) . '</th>';
-                echo '</tr></thead><tbody>';
-
-                foreach ( $monthly_data as $row ) {
-                    $revenue = (float) $row->total_revenue;
-                    $profit = (float) $row->total_profit;
-                    $orders = (int) $row->order_count;
-                    $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
-                    $avg_profit = $orders > 0 ? $profit / $orders : 0;
-
-                    echo '<tr>';
-                    echo '<td><strong>' . esc_html( $row->month ) . '</strong></td>';
-                    echo '<td>' . esc_html( $orders ) . '</td>';
-                    echo '<td>' . wp_kses_post( wc_price( $revenue ) ) . '</td>';
-                    echo '<td>' . wp_kses_post( wc_price( $profit ) ) . '</td>';
-                    echo '<td>' . number_format( $margin, 2 ) . '%</td>';
-                    echo '<td>' . wp_kses_post( wc_price( $avg_profit ) ) . '</td>';
-                    echo '</tr>';
-                }
-
-                echo '</tbody></table>';
-            } else {
-                echo '<div class="notice notice-info" style="margin-top: 20px;"><p>';
-                echo esc_html__( 'Monthly breakdown table hidden for date ranges over 3 months. Use the chart and summary cards above, or narrow your date range to see the detailed table.', 'spvs-cost-profit' );
-                echo '</p></div>';
-            }
-
-            // Chart.js script
-            ?>
-            <script>
-            document.addEventListener('DOMContentLoaded', function() {
-                var ctx = document.getElementById('spvs-profit-chart');
-                if (ctx && typeof Chart !== 'undefined') {
-                    new Chart(ctx, {
-                        type: 'bar',
-                        data: {
-                            labels: <?php echo wp_json_encode( $months ); ?>,
-                            datasets: [{
-                                label: '<?php echo esc_js( __( 'Profit', 'spvs-cost-profit' ) ); ?>',
-                                data: <?php echo wp_json_encode( $profits ); ?>,
-                                backgroundColor: 'rgba(34, 113, 177, 0.7)',
-                                borderColor: 'rgba(34, 113, 177, 1)',
-                                borderWidth: 1,
-                                yAxisID: 'y'
-                            }, {
-                                label: '<?php echo esc_js( __( 'Revenue', 'spvs-cost-profit' ) ); ?>',
-                                data: <?php echo wp_json_encode( $revenues ); ?>,
-                                backgroundColor: 'rgba(0, 163, 42, 0.7)',
-                                borderColor: 'rgba(0, 163, 42, 1)',
-                                borderWidth: 1,
-                                yAxisID: 'y'
-                            }]
-                        },
-                        options: {
-                            responsive: true,
-                            maintainAspectRatio: true,
-                            interaction: {
-                                mode: 'index',
-                                intersect: false
-                            },
-                            plugins: {
-                                legend: {
-                                    position: 'top',
-                                },
-                                title: {
-                                    display: true,
-                                    text: '<?php echo esc_js( __( 'Monthly Profit & Revenue', 'spvs-cost-profit' ) ); ?>'
-                                }
-                            },
-                            scales: {
-                                y: {
-                                    type: 'linear',
-                                    display: true,
-                                    position: 'left',
-                                    ticks: {
-                                        callback: function(value) {
-                                            return '<?php echo esc_js( get_woocommerce_currency_symbol() ); ?>' + value.toFixed(2);
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    });
-                }
-            });
-            </script>
-            <?php
+        // Render active tab content
+        switch ( $active_tab ) {
+            case 'inventory':
+                $this->render_inventory_tab();
+                break;
+            case 'import':
+                $this->render_import_tab();
+                break;
+            case 'reports':
+            default:
+                $this->render_reports_tab();
+                break;
         }
 
         echo '</div>';
     }
 
-    public function render_inventory_admin_page() {
-        if ( ! current_user_can( 'read' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+    private function render_reports_tab() {
+        // Get parameters
+        $grouping = isset( $_GET['grouping'] ) ? sanitize_text_field( $_GET['grouping'] ) : 'monthly';
+        if ( ! in_array( $grouping, array( 'daily', 'monthly', 'yearly' ), true ) ) {
+            $grouping = 'monthly';
+        }
+
+        // Default date ranges based on grouping
+        $default_start = '';
+        $default_end = date( 'Y-m-d' );
+        if ( 'daily' === $grouping ) {
+            $default_start = date( 'Y-m-d', strtotime( '-30 days' ) );
+        } elseif ( 'yearly' === $grouping ) {
+            $default_start = date( 'Y-01-01', strtotime( '-4 years' ) );
+        } else {
+            $default_start = date( 'Y-m-01', strtotime( '-11 months' ) );
+        }
+
+        $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : $default_start;
+        $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : $default_end;
+
+        $report_data = $this->get_profit_data_by_period( $start_date, $end_date, $grouping );
+
+        $export_url = add_query_arg( array(
+            'action'     => 'spvs_export_profit_report',
+            '_wpnonce'   => wp_create_nonce( 'spvs_export_profit_report' ),
+            'start_date' => $start_date,
+            'end_date'   => $end_date,
+            'grouping'   => $grouping,
+        ), admin_url( 'admin-post.php' ) );
+
+        // Filter form
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccc;">';
+        echo '<form method="get" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">';
+        echo '<input type="hidden" name="page" value="spvs-dashboard" />';
+        echo '<input type="hidden" name="tab" value="reports" />';
+
+        echo '<label><strong>' . esc_html__( 'Group By:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<select name="grouping" style="min-width: 120px;">';
+        echo '<option value="daily"' . selected( $grouping, 'daily', false ) . '>' . esc_html__( 'Daily', 'spvs-cost-profit' ) . '</option>';
+        echo '<option value="monthly"' . selected( $grouping, 'monthly', false ) . '>' . esc_html__( 'Monthly', 'spvs-cost-profit' ) . '</option>';
+        echo '<option value="yearly"' . selected( $grouping, 'yearly', false ) . '>' . esc_html__( 'Yearly', 'spvs-cost-profit' ) . '</option>';
+        echo '</select></label>';
+
+        echo '<label><strong>' . esc_html__( 'Start Date:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<input type="date" name="start_date" value="' . esc_attr( $start_date ) . '" /></label>';
+
+        echo '<label><strong>' . esc_html__( 'End Date:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<input type="date" name="end_date" value="' . esc_attr( $end_date ) . '" /></label>';
+
+        echo '<button class="button button-primary">' . esc_html__( 'Update Report', 'spvs-cost-profit' ) . '</button>';
+        echo '<a class="button" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '</form>';
+        echo '</div>';
+
+        if ( empty( $report_data ) ) {
+            echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
+            return;
+        }
+
+        // Calculate totals
+        $periods = array();
+        $revenues = array();
+        $costs = array();
+        $profits = array();
+        $total_revenue = 0;
+        $total_cost = 0;
+        $total_profit = 0;
+        $total_orders = 0;
+
+        foreach ( $report_data as $row ) {
+            $periods[] = $row->period;
+            $revenue = (float) $row->total_revenue;
+            $cost = (float) $row->total_cost;
+            $profit = (float) $row->total_profit;
+            $revenues[] = $revenue;
+            $costs[] = $cost;
+            $profits[] = $profit;
+            $total_revenue += $revenue;
+            $total_cost += $cost;
+            $total_profit += $profit;
+            $total_orders += (int) $row->order_count;
+        }
+
+        $avg_margin = $total_revenue > 0 ? ( $total_profit / $total_revenue ) * 100 : 0;
+
+        // Summary cards
+        echo '<div style="display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap;">';
+
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #00a32a; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'Total Revenue', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #00a32a;">' . wp_kses_post( wc_price( $total_revenue ) ) . '</p>';
+        echo '</div>';
+
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #d63638; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'Total Cost', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #d63638;">' . wp_kses_post( wc_price( $total_cost ) ) . '</p>';
+        echo '</div>';
+
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #2271b1; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'Total Profit', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #2271b1;">' . wp_kses_post( wc_price( $total_profit ) ) . '</p>';
+        echo '</div>';
+
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #ff8c00; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'Avg Margin', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #ff8c00;">' . number_format( $avg_margin, 2 ) . '%</p>';
+        echo '</div>';
+
+        echo '</div>';
+
+        // Chart
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<canvas id="spvs-profit-chart" style="max-height: 400px;"></canvas>';
+        echo '</div>';
+
+        // Data table
+        $show_table_limit = 100; // Show table if less than 100 periods
+        if ( count( $report_data ) <= $show_table_limit ) {
+            echo '<div style="background: #fff; padding: 20px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+            echo '<table class="widefat striped">';
+            echo '<thead><tr>';
+            echo '<th>' . esc_html__( 'Period', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Orders', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Revenue', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Cost', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Profit', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Margin %', 'spvs-cost-profit' ) . '</th>';
+            echo '<th>' . esc_html__( 'Avg Profit/Order', 'spvs-cost-profit' ) . '</th>';
+            echo '</tr></thead><tbody>';
+
+            foreach ( $report_data as $row ) {
+                $revenue = (float) $row->total_revenue;
+                $cost = (float) $row->total_cost;
+                $profit = (float) $row->total_profit;
+                $orders = (int) $row->order_count;
+                $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
+                $avg_profit = $orders > 0 ? $profit / $orders : 0;
+
+                echo '<tr>';
+                echo '<td><strong>' . esc_html( $row->period ) . '</strong></td>';
+                echo '<td>' . esc_html( $orders ) . '</td>';
+                echo '<td>' . wp_kses_post( wc_price( $revenue ) ) . '</td>';
+                echo '<td>' . wp_kses_post( wc_price( $cost ) ) . '</td>';
+                echo '<td>' . wp_kses_post( wc_price( $profit ) ) . '</td>';
+                echo '<td>' . number_format( $margin, 2 ) . '%</td>';
+                echo '<td>' . wp_kses_post( wc_price( $avg_profit ) ) . '</td>';
+                echo '</tr>';
+            }
+
+            echo '</tbody></table>';
+            echo '</div>';
+        } else {
+            echo '<div class="notice notice-info"><p>';
+            echo esc_html( sprintf( __( 'Detailed table hidden for reports with more than %d periods. Use the chart and summary cards above, or narrow your date range to see the detailed table.', 'spvs-cost-profit' ), $show_table_limit ) );
+            echo '</p></div>';
+        }
+
+        // Chart.js script
+        ?>
+        <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            var ctx = document.getElementById('spvs-profit-chart');
+            if (ctx && typeof Chart !== 'undefined') {
+                new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: <?php echo wp_json_encode( $periods ); ?>,
+                        datasets: [{
+                            label: '<?php echo esc_js( __( 'Revenue', 'spvs-cost-profit' ) ); ?>',
+                            data: <?php echo wp_json_encode( $revenues ); ?>,
+                            backgroundColor: 'rgba(0, 163, 42, 0.7)',
+                            borderColor: 'rgba(0, 163, 42, 1)',
+                            borderWidth: 1
+                        }, {
+                            label: '<?php echo esc_js( __( 'Cost', 'spvs-cost-profit' ) ); ?>',
+                            data: <?php echo wp_json_encode( $costs ); ?>,
+                            backgroundColor: 'rgba(214, 54, 56, 0.7)',
+                            borderColor: 'rgba(214, 54, 56, 1)',
+                            borderWidth: 1
+                        }, {
+                            label: '<?php echo esc_js( __( 'Profit', 'spvs-cost-profit' ) ); ?>',
+                            data: <?php echo wp_json_encode( $profits ); ?>,
+                            backgroundColor: 'rgba(34, 113, 177, 0.7)',
+                            borderColor: 'rgba(34, 113, 177, 1)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: true,
+                        interaction: {
+                            mode: 'index',
+                            intersect: false
+                        },
+                        plugins: {
+                            legend: {
+                                position: 'top',
+                            },
+                            title: {
+                                display: true,
+                                text: '<?php echo esc_js( sprintf( __( '%s Profit Report', 'spvs-cost-profit' ), ucfirst( $grouping ) ) ); ?>'
+                            }
+                        },
+                        scales: {
+                            y: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                ticks: {
+                                    callback: function(value) {
+                                        return '<?php echo esc_js( get_woocommerce_currency_symbol() ); ?>' + value.toFixed(2);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        </script>
+        <?php
+    }
+
+    private function render_inventory_tab() {
         global $wpdb;
 
         $totals = get_option( self::INVENTORY_TOTALS_OPTION, array() );
@@ -1007,15 +1108,41 @@ final class SPVS_Cost_Profit {
         $managed = isset( $totals['managed'] ) ? (int) $totals['managed'] : 0;
         $qty_gt0 = isset( $totals['qty_gt0'] ) ? (int) $totals['qty_gt0'] : 0;
 
-        // Count products with COG data
-        $cog_count = $wpdb->get_var( "
-            SELECT COUNT(*) FROM {$wpdb->postmeta}
-            WHERE meta_key = '_wc_cog_cost'
-            AND meta_value != ''
-            AND meta_value != '0'
-        " );
+        // Summary cards
+        echo '<div style="display: flex; gap: 20px; margin: 20px 0; flex-wrap: wrap;">';
 
-        // Column picker
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #2271b1; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'TCOP (Total Cost)', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #2271b1;">' . wp_kses_post( wc_price( $tcop ) ) . '</p>';
+        echo '</div>';
+
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #00a32a; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'Retail Total', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #00a32a;">' . wp_kses_post( wc_price( $retail ) ) . '</p>';
+        echo '</div>';
+
+        echo '<div style="flex: 1; min-width: 200px; background: #fff; padding: 20px; border-left: 4px solid #ff8c00; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">';
+        echo '<h3 style="margin: 0 0 10px 0; color: #666; font-size: 14px;">' . esc_html__( 'Spread', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p style="font-size: 24px; font-weight: bold; margin: 0; color: #ff8c00;">' . wp_kses_post( wc_price( $retail - $tcop ) ) . '</p>';
+        echo '</div>';
+
+        echo '</div>';
+
+        // Stats
+        echo '<div style="background: #fff; padding: 15px; margin: 20px 0; border: 1px solid #ccc;">';
+        if ( $updated ) {
+            echo '<p style="margin: 0 0 10px 0;"><strong>' . esc_html__( 'Last Updated:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( human_time_diff( $updated, time() ) ) . ' ' . esc_html__( 'ago', 'spvs-cost-profit' ) . '</p>';
+        }
+        echo '<p style="margin: 0;"><strong>' . esc_html__( 'Items processed:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( $count ) . ' · ';
+        echo '<strong>' . esc_html__( 'Managing stock:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( $managed ) . ' · ';
+        echo '<strong>' . esc_html__( 'Qty > 0:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( $qty_gt0 ) . '</p>';
+        echo '<p style="margin: 10px 0 0 0; opacity: 0.8; font-size: 13px;">' . esc_html__( 'Note: If a variation has no cost set, it will use the parent product cost automatically.', 'spvs-cost-profit' ) . '</p>';
+        echo '<p style="margin: 10px 0 0 0;">';
+        echo '<a class="button button-primary" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_recalc_inventory&_wpnonce=' . wp_create_nonce( 'spvs_recalc_inventory' ) ) ) . '">' . esc_html__( 'Recalculate Now', 'spvs-cost-profit' ) . '</a>';
+        echo '</p>';
+        echo '</div>';
+
+        // Column picker and export
         $available = $this->spvs_get_available_columns();
         $default_cols = array( 'sku', 'name', 'qty', 'cost', 'regular_price' );
         $selected = isset( $_GET['spvs_cols'] ) ? array_map( 'sanitize_text_field', (array) $_GET['spvs_cols'] ) : $default_cols;
@@ -1028,9 +1155,57 @@ final class SPVS_Cost_Profit {
             'spvs_cols' => $selected,
         ), admin_url( 'admin-post.php' ) );
 
-        echo '<div class="wrap"><h1>' . esc_html__( 'SPVS Inventory Value', 'spvs-cost-profit' ) . '</h1>';
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccc;">';
+        echo '<h3>' . esc_html__( 'Inventory Preview & Export', 'spvs-cost-profit' ) . '</h3>';
+        echo '<form method="get" style="margin: 15px 0; display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">';
+        echo '<input type="hidden" name="page" value="spvs-dashboard" />';
+        echo '<input type="hidden" name="tab" value="inventory" />';
+        echo '<label><strong>' . esc_html__( 'Columns:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<select name="spvs_cols[]" multiple size="6" style="min-width:220px;">';
+        foreach ( $available as $key => $label ) {
+            $sel = in_array( $key, $selected, true ) ? ' selected' : '';
+            echo '<option value="' . esc_attr( $key ) . '"' . $sel . '>' . esc_html( $label ) . '</option>';
+        }
+        echo '</select></label>';
+        echo '<button class="button">' . esc_html__( 'Apply', 'spvs-cost-profit' ) . '</button>';
+        echo '<a class="button button-primary" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_missing_csv' ) ) . '">' . esc_html__( 'Download Missing Costs', 'spvs-cost-profit' ) . '</a>';
+        echo '</form>';
 
-        // Notices
+        // Preview top 100 rows
+        $q = new WP_Query( array( 'post_type' => array( 'product', 'product_variation' ), 'post_status' => 'publish', 'posts_per_page' => 100, 'fields' => 'ids', 'no_found_rows' => true ) );
+        echo '<div style="overflow-x: auto;">';
+        echo '<table class="widefat striped"><thead><tr>';
+        foreach ( $selected as $key ) echo '<th>' . esc_html( $available[ $key ] ) . '</th>';
+        echo '</tr></thead><tbody>';
+        if ( $q->have_posts() ) {
+            foreach ( $q->posts as $pid ) {
+                $product = wc_get_product( $pid ); if ( ! $product ) continue;
+                $row = $this->spvs_build_row_for_columns( $product, $selected );
+                echo '<tr>';
+                foreach ( $row as $cell ) echo '<td>' . esc_html( is_array( $cell ) ? implode( ', ', $cell ) : (string) $cell ) . '</td>';
+                echo '</tr>';
+            }
+        } else {
+            echo '<tr><td colspan="' . count( $selected ) . '">' . esc_html__( 'No items found.', 'spvs-cost-profit' ) . '</td></tr>';
+        }
+        echo '</tbody></table>';
+        echo '</div>';
+        echo '</div>';
+    }
+
+    private function render_import_tab() {
+        global $wpdb;
+
+        // Count products with COG data
+        $cog_count = $wpdb->get_var( "
+            SELECT COUNT(*) FROM {$wpdb->postmeta}
+            WHERE meta_key = '_wc_cog_cost'
+            AND meta_value != ''
+            AND meta_value != '0'
+        " );
+
+        // Display notices
         if ( isset( $_GET['spvs_msg'] ) ) {
             $m = sanitize_text_field( wp_unslash( $_GET['spvs_msg'] ) );
             if ( 'no_file' === $m ) {
@@ -1060,68 +1235,34 @@ final class SPVS_Cost_Profit {
             }
         }
 
-        echo '<p><strong>TCOP:</strong> ' . wp_kses_post( wc_price( $tcop ) ) . ' &nbsp; ';
-        echo '<strong>Retail:</strong> ' . wp_kses_post( wc_price( $retail ) ) . ' &nbsp; ';
-        echo '<strong>Spread:</strong> ' . wp_kses_post( wc_price( $retail - $tcop ) ) . '</p>';
-        if ( $updated ) echo '<p style="opacity:.75;">' . esc_html__( 'Updated', 'spvs-cost-profit' ) . ' ' . esc_html( human_time_diff( $updated, time() ) ) . ' ' . esc_html__( 'ago', 'spvs-cost-profit' ) . '</p>';
-        echo '<p>' . esc_html__( 'Items processed:', 'spvs-cost-profit' ) . ' ' . esc_html( $count ) . ' · ' . esc_html__( 'Managing stock:', 'spvs-cost-profit' ) . ' ' . esc_html( $managed ) . ' · ' . esc_html__( 'Qty > 0:', 'spvs-cost-profit' ) . ' ' . esc_html( $qty_gt0 ) . '</p>';
-        echo '<p style="margin-top:6px; opacity:.8;">' . esc_html__( 'Note: If a variation has no cost set, it will use the parent product cost automatically.', 'spvs-cost-profit' ) . '</p>';
-
-        // COG Import Section (Simple form, no AJAX)
-        echo '<hr style="margin:18px 0;"><h2>' . esc_html__( 'Import from Cost of Goods Plugin', 'spvs-cost-profit' ) . '</h2>';
-        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" onsubmit="return confirm(\'Import costs from Cost of Goods plugin? This may take a moment.\');" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">';
+        // COG Import Section
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccc;">';
+        echo '<h3>' . esc_html__( 'Import from Cost of Goods Plugin', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p>' . esc_html__( 'Found', 'spvs-cost-profit' ) . ' <strong>' . esc_html( $cog_count ) . '</strong> ' . esc_html__( 'products with Cost of Goods data.', 'spvs-cost-profit' ) . '</p>';
+        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" onsubmit="return confirm(\'Import costs from Cost of Goods plugin? This may take a moment.\');">';
         echo '<input type="hidden" name="action" value="spvs_import_cog" />';
         wp_nonce_field( 'spvs_import_cog' );
-        echo '<div class="card" style="width: 100%; padding: 20px; margin: 10px 0;">';
-        echo '<p>Found <strong>' . esc_html( $cog_count ) . '</strong> products with Cost of Goods data.</p>';
         echo '<p><label><input type="checkbox" name="spvs_cog_overwrite" value="1"> ' . esc_html__( 'Overwrite existing cost values', 'spvs-cost-profit' ) . '</label></p>';
         echo '<p><label><input type="checkbox" name="spvs_cog_delete_after" value="1"> ' . esc_html__( 'Delete Cost of Goods data after import', 'spvs-cost-profit' ) . '</label></p>';
-        echo '<button type="submit" class="button button-primary">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
-        echo '<p class="description" style="margin-top: 10px;">' . esc_html__( 'This will import all cost data from the WooCommerce Cost of Goods plugin. No AJAX - direct server processing.', 'spvs-cost-profit' ) . '</p>';
+        echo '<button type="submit" class="button button-primary">' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
+        echo '<p class="description" style="margin-top: 10px;">' . esc_html__( 'This will import all cost data from the WooCommerce Cost of Goods plugin. Direct server processing.', 'spvs-cost-profit' ) . '</p>';
+        echo '</form>';
         echo '</div>';
-        echo '</form>';
 
-        echo '<form method="get" style="margin:12px 0; display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">';
-        echo '<input type="hidden" name="page" value="spvs-inventory" />';
-        echo '<label><strong>' . esc_html__( 'Columns:', 'spvs-cost-profit' ) . '</strong><br/>';
-        echo '<select name="spvs_cols[]" multiple size="6" style="min-width:220px;">';
-        foreach ( $available as $key => $label ) { $sel = in_array( $key, $selected, true ) ? ' selected' : ''; echo '<option value="' . esc_attr( $key ) . '"' . $sel . '>' . esc_html( $label ) . '</option>'; }
-        echo '</select></label>';
-        echo '<button class="button">' . esc_html__( 'Apply', 'spvs-cost-profit' ) . '</button>';
-        echo '<a class="button button-primary" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV (selected columns)', 'spvs-cost-profit' ) . '</a>';
-        echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_template_csv' ) ) . '">' . esc_html__( 'Download Cost Template', 'spvs-cost-profit' ) . '</a>';
-        echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_missing_csv' ) ) . '">' . esc_html__( 'Download items with Qty>0 & missing cost', 'spvs-cost-profit' ) . '</a>';
-        echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_recalc_inventory&_wpnonce=' . wp_create_nonce( 'spvs_recalc_inventory' ) ) ) . '">' . esc_html__( 'Recalculate Now', 'spvs-cost-profit' ) . '</a>';
-        echo '</form>';
-
-        // Upload form
-        echo '<hr style="margin:18px 0;"><h2>' . esc_html__( 'Import Costs (CSV)', 'spvs-cost-profit' ) . '</h2>';
-        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" enctype="multipart/form-data" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">';
+        // CSV Cost Import Section
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccc;">';
+        echo '<h3>' . esc_html__( 'Import Costs from CSV', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p><a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_template_csv' ) ) . '">' . esc_html__( 'Download Template CSV', 'spvs-cost-profit' ) . '</a></p>';
+        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" enctype="multipart/form-data" style="margin-top: 15px;">';
         echo '<input type="hidden" name="action" value="spvs_import_costs_csv" />';
         wp_nonce_field( 'spvs_import_costs_csv' );
-        echo '<label><strong>' . esc_html__( 'CSV file', 'spvs-cost-profit' ) . '</strong><br><input type="file" name="spvs_costs_file" accept=".csv,text/csv" required /></label>';
-        echo '<label><input type="checkbox" name="spvs_recalc_after" value="1" /> ' . esc_html__( 'Recalculate totals after import', 'spvs-cost-profit' ) . '</label>';
+        echo '<p><label><strong>' . esc_html__( 'CSV file:', 'spvs-cost-profit' ) . '</strong><br>';
+        echo '<input type="file" name="spvs_costs_file" accept=".csv,text/csv" required /></label></p>';
+        echo '<p><label><input type="checkbox" name="spvs_recalc_after" value="1" /> ' . esc_html__( 'Recalculate inventory totals after import', 'spvs-cost-profit' ) . '</label></p>';
         echo '<button class="button button-primary">' . esc_html__( 'Import Costs', 'spvs-cost-profit' ) . '</button>';
-        echo '<p class="description" style="width:100%;">' . esc_html__( 'Accepted columns: SKU, Product ID (or variation_id), Slug (parent only), Cost. Header row required: any of "sku" or "product_id"/"variation_id", and "cost".', 'spvs-cost-profit' ) . '</p>';
+        echo '<p class="description" style="margin-top: 10px;">' . esc_html__( 'Accepted columns: SKU, Product ID (or variation_id), Slug (parent only), Cost. Header row required: any of "sku" or "product_id"/"variation_id", and "cost".', 'spvs-cost-profit' ) . '</p>';
         echo '</form>';
-
-        // Preview top 100 rows
-        $q = new WP_Query( array( 'post_type' => array( 'product', 'product_variation' ), 'post_status' => 'publish', 'posts_per_page' => 100, 'fields' => 'ids', 'no_found_rows' => true ) );
-        echo '<table class="widefat striped"><thead><tr>';
-        foreach ( $selected as $key ) echo '<th>' . esc_html( $available[ $key ] ) . '</th>';
-        echo '</tr></thead><tbody>';
-        if ( $q->have_posts() ) {
-            foreach ( $q->posts as $pid ) {
-                $product = wc_get_product( $pid ); if ( ! $product ) continue;
-                $row = $this->spvs_build_row_for_columns( $product, $selected );
-                echo '<tr>';
-                foreach ( $row as $cell ) echo '<td>' . esc_html( is_array( $cell ) ? implode( ', ', $cell ) : (string) $cell ) . '</td>';
-                echo '</tr>';
-            }
-        } else {
-            echo '<tr><td colspan="' . count( $selected ) . '">' . esc_html__( 'No items found.', 'spvs-cost-profit' ) . '</td></tr>';
-        }
-        echo '</tbody></table></div>';
+        echo '</div>';
     }
 
     public function download_missing_cost_csv() {
