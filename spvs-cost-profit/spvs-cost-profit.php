@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.7.6
+ * Version: 1.7.7
  * Author: Megatron
  * License: GPL-2.0+
  */
@@ -43,6 +43,9 @@ final class SPVS_Cost_Profit_V2 {
         // Recalculation handlers
         add_action( 'admin_post_spvs_recalculate_all', array( $this, 'handle_recalculate_all' ) );
         add_action( 'wp_ajax_spvs_batch_recalculate', array( $this, 'ajax_batch_recalculate' ) );
+
+        // Inventory metrics display
+        add_action( 'manage_posts_extra_tablenav', array( $this, 'display_inventory_metrics_on_orders' ), 10, 1 );
     }
 
     /** ============= PRODUCT COST FIELDS ============= */
@@ -171,6 +174,9 @@ final class SPVS_Cost_Profit_V2 {
         // Get report data
         $data = $this->get_report_data( $start_date, $end_date );
 
+        // Get inventory metrics
+        $inventory_metrics = $this->calculate_inventory_metrics();
+
         ?>
         <div class="wrap">
             <style>
@@ -178,6 +184,9 @@ final class SPVS_Cost_Profit_V2 {
                 .spvs-full-width { width: 100%; max-width: none; }
             </style>
             <h1>📊 Profit Reports</h1>
+
+            <!-- Inventory Metrics at Top -->
+            <?php $this->render_inventory_metrics( $inventory_metrics ); ?>
 
             <?php if ( isset( $_GET['recalc_success'] ) ) : ?>
                 <div class="notice notice-success is-dismissible">
@@ -645,6 +654,91 @@ final class SPVS_Cost_Profit_V2 {
             'percentage' => $percentage,
             'message' => sprintf( 'Processed %d of %d orders (%d%%)', $processed, $total, $percentage ),
         ) );
+    }
+
+    /** ============= INVENTORY METRICS ============= */
+
+    private function calculate_inventory_metrics() {
+        global $wpdb;
+
+        $tcop = 0; // Total Cost of Products (sum of unit costs)
+        $tvoe = 0; // Total Value of Inventory (cost × quantity)
+
+        // Get all product IDs (simple and variations)
+        $product_ids = $wpdb->get_col( "
+            SELECT ID FROM {$wpdb->posts}
+            WHERE post_type IN ('product', 'product_variation')
+            AND post_status = 'publish'
+        " );
+
+        foreach ( $product_ids as $product_id ) {
+            $product = wc_get_product( $product_id );
+            if ( ! $product ) {
+                continue;
+            }
+
+            // Get product cost
+            $cost = $this->get_product_cost( $product_id );
+            if ( $cost <= 0 ) {
+                continue; // Skip products with no cost
+            }
+
+            // Get stock quantity
+            if ( ! $product->managing_stock() ) {
+                continue; // Skip products with unmanaged stock
+            }
+
+            $stock_qty = $product->get_stock_quantity();
+            if ( $stock_qty <= 0 ) {
+                continue; // Skip products with 0 or negative stock
+            }
+
+            // Add to totals
+            $tcop += $cost; // Just the unit cost
+            $tvoe += ( $cost * $stock_qty ); // Cost × Quantity
+        }
+
+        return array(
+            'tcop' => $tcop,
+            'tvoe' => $tvoe,
+            'spread' => $tvoe - $tcop,
+        );
+    }
+
+    public function display_inventory_metrics_on_orders( $which ) {
+        // Only display on shop_order post type and on 'top' position
+        global $typenow;
+        if ( $typenow !== 'shop_order' || $which !== 'top' ) {
+            return;
+        }
+
+        $metrics = $this->calculate_inventory_metrics();
+        $this->render_inventory_metrics( $metrics );
+    }
+
+    private function render_inventory_metrics( $metrics ) {
+        ?>
+        <div class="spvs-inventory-metrics" style="background: #f0f6fc; padding: 15px; margin: 10px 0; border-radius: 4px; display: flex; gap: 30px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 200px;">
+                <strong style="color: #666; font-size: 12px; display: block; margin-bottom: 5px;">📦 TCOP (Total Cost of Products)</strong>
+                <span style="font-size: 20px; font-weight: bold; color: #2271b1;">
+                    <?php echo wc_price( $metrics['tcop'] ); ?>
+                </span>
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <strong style="color: #666; font-size: 12px; display: block; margin-bottom: 5px;">📊 TVOE (Total Value of Inventory)</strong>
+                <span style="font-size: 20px; font-weight: bold; color: #00a32a;">
+                    <?php echo wc_price( $metrics['tvoe'] ); ?>
+                </span>
+            </div>
+            <div style="flex: 1; min-width: 200px;">
+                <strong style="color: #666; font-size: 12px; display: block; margin-bottom: 5px;">📈 Spread (Difference)</strong>
+                <span style="font-size: 20px; font-weight: bold; color: <?php echo $metrics['spread'] >= 0 ? '#00a32a' : '#d63638'; ?>;">
+                    <?php echo wc_price( $metrics['spread'] ); ?>
+                </span>
+            </div>
+        </div>
+        <?php
     }
 }
 
