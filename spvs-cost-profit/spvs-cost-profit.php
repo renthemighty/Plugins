@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.4
+ * Version: 1.9.5-debug
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -729,6 +729,30 @@ final class SPVS_Cost_Profit {
                     }, $order_statuses );
                     $hpos_status_list = "'" . implode( "','", $hpos_statuses ) . "'";
 
+                    // DEBUG: Check how many orders exist in date range
+                    $debug_count = $wpdb->get_var( $wpdb->prepare(
+                        "SELECT COUNT(*) FROM {$orders_table}
+                        WHERE status IN ($hpos_status_list)
+                        AND DATE(date_created_gmt) >= %s
+                        AND DATE(date_created_gmt) <= %s",
+                        $start_date,
+                        $end_date
+                    ) );
+                    error_log( "SPVS DEBUG: Found $debug_count orders in HPOS for date range $start_date to $end_date with statuses: " . implode(', ', $hpos_statuses) );
+
+                    // DEBUG: Check orders with profit metadata
+                    $debug_profit_count = $wpdb->get_var( $wpdb->prepare(
+                        "SELECT COUNT(DISTINCT o.id) FROM {$orders_table} o
+                        INNER JOIN {$orders_meta_table} om ON o.id = om.order_id AND om.meta_key = %s
+                        WHERE o.status IN ($hpos_status_list)
+                        AND DATE(o.date_created_gmt) >= %s
+                        AND DATE(o.date_created_gmt) <= %s",
+                        self::ORDER_TOTAL_PROFIT_META,
+                        $start_date,
+                        $end_date
+                    ) );
+                    error_log( "SPVS DEBUG: Found $debug_profit_count orders with profit metadata (_spvs_total_profit)" );
+
                     $query = $wpdb->prepare(
                         "SELECT
                             DATE_FORMAT(o.date_created_gmt, '$date_format') as period,
@@ -747,6 +771,8 @@ final class SPVS_Cost_Profit {
                         $end_date
                     );
 
+                    error_log( "SPVS DEBUG: Executing query: " . $query );
+
                     $results = $wpdb->get_results( $query );
 
                     // Check for SQL errors
@@ -755,10 +781,13 @@ final class SPVS_Cost_Profit {
                         error_log( 'SPVS Profit Report Query: ' . $query );
                     }
 
+                    error_log( 'SPVS DEBUG: Query returned ' . ( is_array( $results ) ? count( $results ) : 0 ) . ' result rows' );
+
                     if ( is_array( $results ) ) {
                         // Calculate total cost for each period
                         foreach ( $results as $row ) {
                             $row->total_cost = ( (float) $row->total_revenue ) - ( (float) $row->total_profit );
+                            error_log( "SPVS DEBUG: Period {$row->period} - Orders: {$row->order_count}, Revenue: {$row->total_revenue}, Profit: {$row->total_profit}" );
                         }
                         return $results;
                     }
