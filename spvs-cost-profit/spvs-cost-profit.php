@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.6.2
+ * Version: 1.6.3
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -146,7 +146,7 @@ final class SPVS_Cost_Profit {
 
         if ( 'woocommerce_page_spvs-profit-reports' === $hook ) {
             // Enqueue order recalculation progress modal script
-            wp_enqueue_script( 'spvs-order-recalc', plugins_url( 'js/order-recalc.js', __FILE__ ), array( 'jquery' ), '1.5.3', true );
+            wp_enqueue_script( 'spvs-order-recalc', plugins_url( 'js/order-recalc.js', __FILE__ ), array( 'jquery' ), '1.6.2', true );
             wp_localize_script( 'spvs-order-recalc', 'spvsRecalcOrders', array(
                 'ajaxurl' => admin_url( 'admin-ajax.php' ),
                 'nonce' => wp_create_nonce( 'spvs_recalc_orders' ),
@@ -1914,7 +1914,15 @@ final class SPVS_Cost_Profit {
         <script>
         document.addEventListener('DOMContentLoaded', function() {
             var ctx = document.getElementById('spvs-profit-chart');
-            if (ctx && typeof Chart !== 'undefined') {
+            if (!ctx) {
+                console.error('SPVS: Chart canvas element not found');
+                return;
+            }
+            if (typeof Chart === 'undefined') {
+                console.error('SPVS: Chart.js library not loaded');
+                return;
+            }
+            try {
                 new Chart(ctx, {
                     type: 'bar',
                     data: {
@@ -1955,6 +1963,8 @@ final class SPVS_Cost_Profit {
                         }
                     }
                 });
+            } catch (error) {
+                console.error('SPVS: Error rendering chart:', error);
             }
         });
         </script>
