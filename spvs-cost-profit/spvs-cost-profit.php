@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.8
+ * Version: 1.5.9
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -127,7 +127,7 @@ final class SPVS_Cost_Profit {
 
     /** ---------------- Admin assets ---------------- */
     public function enqueue_admin_assets( $hook ) {
-        if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook ) {
+        if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook || 'woocommerce_page_spvs-dashboard' === $hook ) {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
 
@@ -1426,8 +1426,19 @@ final class SPVS_Cost_Profit {
 
     /** --------------- Admin pages --------------- */
     public function register_admin_pages() {
+        // Single main dashboard page
         add_submenu_page(
             'woocommerce',
+            __( 'SPVS Cost & Profit', 'spvs-cost-profit' ),
+            __( 'Cost & Profit', 'spvs-cost-profit' ),
+            'read',
+            'spvs-dashboard',
+            array( $this, 'render_dashboard_page' )
+        );
+
+        // Hidden pages (accessible via dashboard links)
+        add_submenu_page(
+            null, // No menu item
             __( 'SPVS Inventory Value', 'spvs-cost-profit' ),
             __( 'SPVS Inventory', 'spvs-cost-profit' ),
             'read',
@@ -1436,7 +1447,7 @@ final class SPVS_Cost_Profit {
         );
 
         add_submenu_page(
-            'woocommerce',
+            null, // No menu item
             __( 'SPVS Profit Reports', 'spvs-cost-profit' ),
             __( 'SPVS Profit Reports', 'spvs-cost-profit' ),
             'read',
@@ -1445,13 +1456,115 @@ final class SPVS_Cost_Profit {
         );
 
         add_submenu_page(
-            'woocommerce',
+            null, // No menu item
             __( 'SPVS Data Recovery', 'spvs-cost-profit' ),
             __( 'SPVS Data Recovery', 'spvs-cost-profit' ),
             'manage_woocommerce',
             'spvs-data-recovery',
             array( $this, 'render_data_recovery_page' )
         );
+    }
+
+    /** ---------------- Dashboard Page ---------------- */
+    public function render_dashboard_page() {
+        if ( ! current_user_can( 'read' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+
+        // Get current inventory totals
+        $totals = get_option( self::INVENTORY_TOTALS_OPTION, array() );
+        $tcop = isset( $totals['tcop'] ) ? (float) $totals['tcop'] : 0;
+        $retail = isset( $totals['retail'] ) ? (float) $totals['retail'] : 0;
+        $spread = $retail - $tcop;
+        $margin = $retail > 0 ? ( $spread / $retail ) * 100 : 0;
+
+        echo '<div class="wrap">';
+        echo '<h1>📊 ' . esc_html__( 'Cost & Profit Dashboard', 'spvs-cost-profit' ) . '</h1>';
+        echo '<p style="font-size:14px; color:#666;">' . esc_html__( 'Manage product costs, track inventory value, and analyze profit margins.', 'spvs-cost-profit' ) . '</p>';
+
+        // Quick Stats
+        echo '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 20px; margin: 25px 0;">';
+
+        // TCOP Card
+        echo '<div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">';
+        echo '<div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">💰 ' . esc_html__( 'Total Cost of Products', 'spvs-cost-profit' ) . '</div>';
+        echo '<div style="font-size: 32px; font-weight: bold;">' . wp_kses_post( wc_price( $tcop ) ) . '</div>';
+        echo '</div>';
+
+        // Retail Card
+        echo '<div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">';
+        echo '<div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">🏪 ' . esc_html__( 'Total Retail Value', 'spvs-cost-profit' ) . '</div>';
+        echo '<div style="font-size: 32px; font-weight: bold;">' . wp_kses_post( wc_price( $retail ) ) . '</div>';
+        echo '</div>';
+
+        // Spread Card
+        echo '<div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">';
+        echo '<div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">📈 ' . esc_html__( 'Potential Profit', 'spvs-cost-profit' ) . '</div>';
+        echo '<div style="font-size: 32px; font-weight: bold;">' . wp_kses_post( wc_price( $spread ) ) . '</div>';
+        echo '</div>';
+
+        // Margin Card
+        echo '<div style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%); color: white; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">';
+        echo '<div style="font-size: 14px; opacity: 0.9; margin-bottom: 8px;">📊 ' . esc_html__( 'Average Margin', 'spvs-cost-profit' ) . '</div>';
+        echo '<div style="font-size: 32px; font-weight: bold;">' . number_format( $margin, 1 ) . '%</div>';
+        echo '</div>';
+
+        echo '</div>';
+
+        // Feature Cards
+        echo '<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 30px 0;">';
+
+        // Inventory Management Card
+        echo '<div style="background: white; border: 1px solid #e0e0e0; border-radius: 10px; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">';
+        echo '<h2 style="margin: 0 0 12px 0; font-size: 20px; color: #2271b1;">📦 ' . esc_html__( 'Inventory Management', 'spvs-cost-profit' ) . '</h2>';
+        echo '<p style="color: #666; margin: 0 0 20px 0;">' . esc_html__( 'Manage product costs, import/export data, and track inventory value.', 'spvs-cost-profit' ) . '</p>';
+        echo '<ul style="margin: 0 0 20px 20px; color: #666; font-size: 14px;">';
+        echo '<li>' . esc_html__( 'Set and update product costs', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'CSV import/export', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'Cost of Goods migration', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'Real-time inventory valuation', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '<a href="' . esc_url( admin_url( 'admin.php?page=spvs-inventory' ) ) . '" class="button button-primary button-large" style="width: 100%; text-align: center;">→ ' . esc_html__( 'Go to Inventory', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
+
+        // Profit Reports Card
+        echo '<div style="background: white; border: 1px solid #e0e0e0; border-radius: 10px; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">';
+        echo '<h2 style="margin: 0 0 12px 0; font-size: 20px; color: #00a32a;">📈 ' . esc_html__( 'Profit Reports', 'spvs-cost-profit' ) . '</h2>';
+        echo '<p style="color: #666; margin: 0 0 20px 0;">' . esc_html__( 'Analyze monthly profit trends and recalculate historical data.', 'spvs-cost-profit' ) . '</p>';
+        echo '<ul style="margin: 0 0 20px 20px; color: #666; font-size: 14px;">';
+        echo '<li>' . esc_html__( 'Monthly profit analysis', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'Interactive charts', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'Date range filtering', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'CSV export reports', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '<a href="' . esc_url( admin_url( 'admin.php?page=spvs-profit-reports' ) ) . '" class="button button-primary button-large" style="width: 100%; text-align: center; background: #00a32a; border-color: #00a32a;">→ ' . esc_html__( 'View Reports', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
+
+        // Data Recovery Card
+        echo '<div style="background: white; border: 1px solid #e0e0e0; border-radius: 10px; padding: 25px; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">';
+        echo '<h2 style="margin: 0 0 12px 0; font-size: 20px; color: #d63638;">🔒 ' . esc_html__( 'Data Protection', 'spvs-cost-profit' ) . '</h2>';
+        echo '<p style="color: #666; margin: 0 0 20px 0;">' . esc_html__( 'Backup, restore, and protect your cost data.', 'spvs-cost-profit' ) . '</p>';
+        echo '<ul style="margin: 0 0 20px 20px; color: #666; font-size: 14px;">';
+        echo '<li>' . esc_html__( 'Automatic daily backups', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'Manual backup creation', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'One-click restore', 'spvs-cost-profit' ) . '</li>';
+        echo '<li>' . esc_html__( 'Export backup data', 'spvs-cost-profit' ) . '</li>';
+        echo '</ul>';
+        echo '<a href="' . esc_url( admin_url( 'admin.php?page=spvs-data-recovery' ) ) . '" class="button button-large" style="width: 100%; text-align: center; background: #d63638; border-color: #d63638; color: white;">→ ' . esc_html__( 'Manage Backups', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
+
+        echo '</div>';
+
+        // Quick Actions
+        echo '<div style="background: white; border: 1px solid #e0e0e0; border-radius: 10px; padding: 25px; margin: 20px 0; box-shadow: 0 2px 8px rgba(0,0,0,0.05);">';
+        echo '<h2 style="margin: 0 0 15px 0; font-size: 18px;">⚡ ' . esc_html__( 'Quick Actions', 'spvs-cost-profit' ) . '</h2>';
+        echo '<div style="display: flex; gap: 10px; flex-wrap: wrap;">';
+        echo '<a href="' . esc_url( admin_url( 'admin.php?page=spvs-inventory' ) ) . '" class="button">📤 ' . esc_html__( 'Export Costs CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '<a href="' . esc_url( admin_url( 'admin.php?page=spvs-inventory' ) ) . '" class="button">📥 ' . esc_html__( 'Import Costs CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '<a href="' . esc_url( admin_url( 'admin-post.php?action=spvs_recalc_inventory&_wpnonce=' . wp_create_nonce( 'spvs_recalc_inventory' ) ) ) . '" class="button">🔄 ' . esc_html__( 'Recalculate Inventory', 'spvs-cost-profit' ) . '</a>';
+        echo '<a href="' . esc_url( admin_url( 'admin.php?page=spvs-profit-reports' ) ) . '" class="button">📊 ' . esc_html__( 'View This Month', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
+        echo '</div>';
+
+        echo '</div>';
     }
 
     public function render_profit_reports_page() {
