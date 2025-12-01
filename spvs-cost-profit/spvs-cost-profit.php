@@ -924,10 +924,6 @@ final class SPVS_Cost_Profit {
                 }
 
                 echo '</tbody></table>';
-            } else {
-                echo '<div class="notice notice-info" style="margin-top: 20px;"><p>';
-                echo esc_html__( 'Monthly breakdown table hidden for date ranges over 3 months. Use the chart and summary cards above, or narrow your date range to see the detailed table.', 'spvs-cost-profit' );
-                echo '</p></div>';
             }
 
             // Chart.js script
