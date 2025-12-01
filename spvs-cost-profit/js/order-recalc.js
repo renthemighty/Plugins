@@ -26,9 +26,12 @@ jQuery(document).ready(function($) {
     });
 
     function processNextRecalcBatch(offset) {
+        console.log('Starting recalc batch at offset:', offset, 'Date range:', dateRange);
+
         $.ajax({
             url: spvsRecalcOrders.ajaxurl,
             type: 'POST',
+            timeout: 60000, // 60 second timeout
             data: {
                 action: 'spvs_recalc_orders_batch',
                 nonce: spvsRecalcOrders.nonce,
@@ -37,6 +40,7 @@ jQuery(document).ready(function($) {
                 end_date: dateRange.end
             },
             success: function(response) {
+                console.log('AJAX response:', response);
                 if (response.success) {
                     const data = response.data;
 
@@ -65,12 +69,21 @@ jQuery(document).ready(function($) {
                         }, 500);
                     }
                 } else {
-                    $('#spvs-recalc-progress-status').html('<strong style="color: #d63638;">❌ Error: ' + (response.data ? response.data.message : 'Unknown error') + '</strong>');
+                    console.error('Recalc error:', response);
+                    var errorMsg = response.data && response.data.message ? response.data.message : 'Unknown error';
+                    $('#spvs-recalc-progress-status').html('<strong style="color: #d63638;">❌ Error: ' + errorMsg + '</strong>');
                     $('#spvs-recalc-complete-btn').fadeIn();
                 }
             },
-            error: function() {
-                $('#spvs-recalc-progress-status').html('<strong style="color: #d63638;">❌ Network error occurred</strong>');
+            error: function(xhr, status, error) {
+                console.error('AJAX error:', status, error, xhr.responseText);
+                var errorMsg = 'Network error';
+                if (status === 'timeout') {
+                    errorMsg = 'Request timed out - server might be busy';
+                } else if (xhr.responseText) {
+                    errorMsg = 'Server error: ' + xhr.status;
+                }
+                $('#spvs-recalc-progress-status').html('<strong style="color: #d63638;">❌ ' + errorMsg + '</strong>');
                 $('#spvs-recalc-complete-btn').fadeIn();
             }
         });
