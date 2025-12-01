@@ -115,8 +115,9 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_post_spvs_import_from_cog', array( $this, 'import_from_cost_of_goods' ) );
         add_action( 'wp_ajax_spvs_cog_import_batch', array( $this, 'ajax_import_cog_batch' ) );
 
-        /** Order profit recalculation */
-        add_action( 'wp_ajax_spvs_recalc_orders_batch', array( $this, 'ajax_recalc_orders_batch' ) );
+        /** Order profit recalculation - Server-side processing */
+        add_action( 'admin_post_spvs_recalc_orders_start', array( $this, 'handle_recalc_orders_start' ) );
+        add_action( 'admin_post_spvs_recalc_orders_process', array( $this, 'handle_recalc_orders_process' ) );
 
         /** Dedicated admin pages under WooCommerce */
         add_action( 'admin_menu', array( $this, 'register_admin_pages' ) );
@@ -144,14 +145,7 @@ final class SPVS_Cost_Profit {
             ) );
         }
 
-        if ( 'woocommerce_page_spvs-profit-reports' === $hook ) {
-            // Enqueue order recalculation progress modal script
-            wp_enqueue_script( 'spvs-order-recalc', plugins_url( 'js/order-recalc.js', __FILE__ ), array( 'jquery' ), '1.6.2', true );
-            wp_localize_script( 'spvs-order-recalc', 'spvsRecalcOrders', array(
-                'ajaxurl' => admin_url( 'admin-ajax.php' ),
-                'nonce' => wp_create_nonce( 'spvs_recalc_orders' ),
-            ) );
-        }
+        // Profit reports page uses server-side processing, no JavaScript needed
     }
 
     private function get_progress_modal_css() {
@@ -1143,58 +1137,75 @@ final class SPVS_Cost_Profit {
         ) );
     }
 
-    /** ---------------- Order Profit Recalculation (Batch) ---------------- */
-    public function ajax_recalc_orders_batch() {
-        check_ajax_referer( 'spvs_recalc_orders', 'nonce' );
+    /** ---------------- Order Profit Recalculation (Server-Side) ---------------- */
+    public function handle_recalc_orders_start() {
+        check_admin_referer( 'spvs_recalc_orders_start' );
 
         if ( ! current_user_can( 'manage_woocommerce' ) ) {
-            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
+            wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
         }
 
         global $wpdb;
 
-        $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
-        $batch_size = 20;
-        $is_first_batch = ( $offset === 0 );
-
-        // Get date range
         $start_date = isset( $_POST['start_date'] ) ? sanitize_text_field( $_POST['start_date'] ) : '';
         $end_date = isset( $_POST['end_date'] ) ? sanitize_text_field( $_POST['end_date'] ) : '';
 
-        // Get total count and cache for subsequent batches
-        if ( $is_first_batch ) {
-            // Direct database query - much more reliable
-            $where = "post_type = 'shop_order' AND post_status IN ('wc-completed', 'wc-processing')";
+        // Get all order IDs using direct database query
+        $where = "post_type = 'shop_order' AND post_status IN ('wc-completed', 'wc-processing')";
 
-            if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
-                $start_datetime = $start_date . ' 00:00:00';
-                $end_datetime = $end_date . ' 23:59:59';
-                $where .= $wpdb->prepare( " AND post_date >= %s AND post_date <= %s", $start_datetime, $end_datetime );
-            }
-
-            $query = "SELECT ID FROM {$wpdb->posts} WHERE {$where} ORDER BY ID ASC";
-            $all_order_ids = $wpdb->get_col( $query );
-            $total = count( $all_order_ids );
-
-            if ( $total <= 0 ) {
-                wp_send_json_error( array(
-                    'message' => 'No orders found between ' . $start_date . ' and ' . $end_date . '. Found ' . $total . ' orders.'
-                ) );
-            }
-
-            // Cache order IDs
-            set_transient( 'spvs_recalc_order_ids', $all_order_ids, HOUR_IN_SECONDS );
-            set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
-        } else {
-            $all_order_ids = get_transient( 'spvs_recalc_order_ids' );
-            $total = (int) get_transient( 'spvs_recalc_total' );
-
-            if ( ! $all_order_ids || ! $total ) {
-                wp_send_json_error( array( 'message' => 'Session expired. Please try again.' ) );
-            }
+        if ( ! empty( $start_date ) && ! empty( $end_date ) ) {
+            $start_datetime = $start_date . ' 00:00:00';
+            $end_datetime = $end_date . ' 23:59:59';
+            $where .= $wpdb->prepare( " AND post_date >= %s AND post_date <= %s", $start_datetime, $end_datetime );
         }
 
-        // Get batch
+        $query = "SELECT ID FROM {$wpdb->posts} WHERE {$where} ORDER BY ID ASC";
+        $all_order_ids = $wpdb->get_col( $query );
+        $total = count( $all_order_ids );
+
+        if ( $total <= 0 ) {
+            wp_die( sprintf(
+                esc_html__( 'No orders found between %s and %s.', 'spvs-cost-profit' ),
+                esc_html( $start_date ),
+                esc_html( $end_date )
+            ) );
+        }
+
+        // Store in transient for processing
+        set_transient( 'spvs_recalc_order_ids', $all_order_ids, HOUR_IN_SECONDS );
+        set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
+        set_transient( 'spvs_recalc_start_date', $start_date, HOUR_IN_SECONDS );
+        set_transient( 'spvs_recalc_end_date', $end_date, HOUR_IN_SECONDS );
+
+        // Start processing
+        $process_url = add_query_arg( array(
+            'action' => 'spvs_recalc_orders_process',
+            'offset' => 0,
+        ), admin_url( 'admin-post.php' ) );
+
+        wp_redirect( $process_url );
+        exit;
+    }
+
+    public function handle_recalc_orders_process() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        }
+
+        $offset = isset( $_GET['offset'] ) ? (int) $_GET['offset'] : 0;
+        $batch_size = 50; // Process 50 orders at a time
+
+        // Get cached data
+        $all_order_ids = get_transient( 'spvs_recalc_order_ids' );
+        $total = (int) get_transient( 'spvs_recalc_total' );
+        $start_date = get_transient( 'spvs_recalc_start_date' );
+        $end_date = get_transient( 'spvs_recalc_end_date' );
+
+        if ( ! $all_order_ids || ! $total ) {
+            wp_die( esc_html__( 'Session expired. Please start recalculation again.', 'spvs-cost-profit' ) );
+        }
+
+        // Process this batch
         $batch_ids = array_slice( $all_order_ids, $offset, $batch_size );
         $recalculated = 0;
 
@@ -1202,34 +1213,92 @@ final class SPVS_Cost_Profit {
             $order = wc_get_order( $order_id );
             if ( ! $order ) continue;
 
-            // Recalculate profit
             delete_post_meta( $order_id, self::ORDER_TOTAL_PROFIT_META );
             $this->recalculate_order_total_profit( $order );
             $recalculated++;
         }
 
         $processed = $offset + $recalculated;
+        $percentage = $total > 0 ? round( ( $processed / $total ) * 100 ) : 100;
         $is_complete = ( $processed >= $total );
 
-        // Cleanup
         if ( $is_complete ) {
+            // Cleanup transients
             delete_transient( 'spvs_recalc_order_ids' );
             delete_transient( 'spvs_recalc_total' );
+            delete_transient( 'spvs_recalc_start_date' );
+            delete_transient( 'spvs_recalc_end_date' );
+
+            // Redirect back to reports page
+            $redirect_url = add_query_arg( array(
+                'page' => 'spvs-profit-reports',
+                'recalc_complete' => 1,
+                'recalc_total' => $total,
+                'start_date' => $start_date,
+                'end_date' => $end_date,
+            ), admin_url( 'admin.php' ) );
+
+            wp_redirect( $redirect_url );
+            exit;
         }
 
-        wp_send_json_success( array(
-            'processed'    => $processed,
-            'total'        => $total,
-            'recalculated' => $recalculated,
-            'complete'     => $is_complete,
-            'percentage'   => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100,
-            'debug'        => array(
-                'start_date' => $start_date,
-                'end_date'   => $end_date,
-                'offset'     => $offset,
-                'batch_size' => $batch_size,
-            )
-        ) );
+        // Continue processing - show progress page
+        $this->render_recalc_progress_page( $processed, $total, $percentage, $start_date, $end_date );
+    }
+
+    private function render_recalc_progress_page( $processed, $total, $percentage, $start_date, $end_date ) {
+        $next_url = add_query_arg( array(
+            'action' => 'spvs_recalc_orders_process',
+            'offset' => $processed,
+        ), admin_url( 'admin-post.php' ) );
+
+        ?>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta http-equiv="refresh" content="1;url=<?php echo esc_url( $next_url ); ?>">
+            <title><?php esc_html_e( 'Recalculating Orders...', 'spvs-cost-profit' ); ?></title>
+            <style>
+                body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f0f1; padding: 50px 20px; margin: 0; }
+                .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 40px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+                h1 { color: #1d2327; margin: 0 0 20px 0; font-size: 24px; }
+                .progress-bar { background: #f0f0f1; height: 30px; border-radius: 4px; overflow: hidden; margin: 20px 0; }
+                .progress-fill { background: #2271b1; height: 100%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: #fff; font-weight: bold; }
+                .stats { background: #f6f7f7; padding: 20px; border-radius: 4px; margin: 20px 0; }
+                .stat { margin: 10px 0; font-size: 14px; }
+                .stat strong { display: inline-block; min-width: 120px; }
+                .spinner { margin: 20px auto; text-align: center; }
+                .spinner:after { content: "⚙️"; font-size: 48px; display: inline-block; animation: spin 2s linear infinite; }
+                @keyframes spin { 100% { transform: rotate(360deg); } }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <h1>🔄 <?php esc_html_e( 'Recalculating Order Profit', 'spvs-cost-profit' ); ?></h1>
+
+                <div class="progress-bar">
+                    <div class="progress-fill" style="width: <?php echo esc_attr( $percentage ); ?>%">
+                        <?php echo esc_html( $percentage ); ?>%
+                    </div>
+                </div>
+
+                <div class="stats">
+                    <div class="stat"><strong><?php esc_html_e( 'Date Range:', 'spvs-cost-profit' ); ?></strong> <?php echo esc_html( $start_date ); ?> to <?php echo esc_html( $end_date ); ?></div>
+                    <div class="stat"><strong><?php esc_html_e( 'Processed:', 'spvs-cost-profit' ); ?></strong> <?php echo esc_html( number_format( $processed ) ); ?> / <?php echo esc_html( number_format( $total ) ); ?></div>
+                    <div class="stat"><strong><?php esc_html_e( 'Remaining:', 'spvs-cost-profit' ); ?></strong> <?php echo esc_html( number_format( $total - $processed ) ); ?></div>
+                </div>
+
+                <div class="spinner"></div>
+
+                <p style="text-align: center; color: #646970; font-size: 14px;">
+                    <?php esc_html_e( 'Please wait... This page will refresh automatically.', 'spvs-cost-profit' ); ?>
+                </p>
+            </div>
+        </body>
+        </html>
+        <?php
+        exit;
     }
 
     /** ---------------- Column helpers for CSV/Preview ---------------- */
@@ -1728,16 +1797,32 @@ final class SPVS_Cost_Profit {
             <!-- Recalculation Tool -->
             <div class="spvs-card">
                 <h2><?php esc_html_e( '🔄 Recalculate Profit', 'spvs-cost-profit' ); ?></h2>
-                <p class="description"><?php esc_html_e( 'Recalculate profit for orders in the selected date range using current product cost data. Use this if you have updated product costs and want to refresh historical order profits.', 'spvs-cost-profit' ); ?></p>
-                <button
-                    id="spvs-recalc-orders-btn"
-                    class="button button-secondary"
-                    data-start-date="<?php echo esc_attr( $start_date ); ?>"
-                    data-end-date="<?php echo esc_attr( $end_date ); ?>"
-                    style="margin-top: 10px;">
-                    <?php esc_html_e( '🔄 Recalculate Orders', 'spvs-cost-profit' ); ?>
-                </button>
+                <p class="description"><?php esc_html_e( 'Recalculate profit for orders in the selected date range using current product cost data. This will process all orders and update their profit values.', 'spvs-cost-profit' ); ?></p>
+                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="margin-top: 10px;">
+                    <input type="hidden" name="action" value="spvs_recalc_orders_start" />
+                    <input type="hidden" name="start_date" value="<?php echo esc_attr( $start_date ); ?>" />
+                    <input type="hidden" name="end_date" value="<?php echo esc_attr( $end_date ); ?>" />
+                    <?php wp_nonce_field( 'spvs_recalc_orders_start' ); ?>
+                    <button type="submit" class="button button-secondary">
+                        <?php esc_html_e( '🔄 Recalculate Orders', 'spvs-cost-profit' ); ?>
+                    </button>
+                </form>
             </div>
+
+            <?php if ( isset( $_GET['recalc_complete'] ) ) : ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>
+                        <strong><?php esc_html_e( 'Recalculation Complete!', 'spvs-cost-profit' ); ?></strong>
+                        <?php
+                        $total_recalc = isset( $_GET['recalc_total'] ) ? (int) $_GET['recalc_total'] : 0;
+                        echo ' ' . sprintf(
+                            esc_html__( 'Successfully recalculated profit for %s orders.', 'spvs-cost-profit' ),
+                            '<strong>' . number_format( $total_recalc ) . '</strong>'
+                        );
+                        ?>
+                    </p>
+                </div>
+            <?php endif; ?>
 
             <!-- View Type Indicator -->
             <div class="spvs-alert spvs-alert-<?php echo $use_daily_view ? 'success' : 'info'; ?>">
@@ -1824,32 +1909,6 @@ final class SPVS_Cost_Profit {
                     margin: 0;
                 }
             </style>
-
-            <!-- Recalculation Progress Modal -->
-            <div id="spvs-recalc-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999999;">
-                <div style="position:relative; width:600px; max-width:90%; margin:100px auto; background:#fff; padding:30px; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
-                    <h2 style="margin-top:0;"><?php esc_html_e( '🔄 Recalculating Order Profit', 'spvs-cost-profit' ); ?></h2>
-
-                    <div style="margin:20px 0;">
-                        <div id="spvs-recalc-progress-bar" style="background:#2271b1; color:#fff; text-align:center; padding:10px; border-radius:4px; min-width:30px; transition:width 0.3s;">0%</div>
-                    </div>
-
-                    <p id="spvs-recalc-progress-status" style="margin:15px 0; font-weight:bold;">Initializing...</p>
-
-                    <div style="background:#f0f0f0; padding:15px; border-radius:4px; margin:15px 0;">
-                        <p style="margin:5px 0;"><strong><?php esc_html_e( 'Recalculated:', 'spvs-cost-profit' ); ?></strong> <span id="spvs-recalc-detail-count">0</span></p>
-                        <p style="margin:5px 0;"><strong><?php esc_html_e( 'Processed:', 'spvs-cost-profit' ); ?></strong> <span id="spvs-recalc-detail-processed">0 / 0</span></p>
-                    </div>
-
-                    <button id="spvs-recalc-complete-btn" class="button button-primary" style="display:none;"><?php esc_html_e( 'Close & Reload', 'spvs-cost-profit' ); ?></button>
-
-                    <!-- Debug Panel -->
-                    <div id="spvs-recalc-debug" style="display:none; margin-top:20px; border-top:1px solid #ddd; padding-top:15px;">
-                        <h3><?php esc_html_e( 'Debug Log', 'spvs-cost-profit' ); ?></h3>
-                        <div id="spvs-recalc-debug-content" style="background:#f9f9f9; padding:10px; border:1px solid #ddd; border-radius:4px; max-height:200px; overflow-y:auto; font-family:monospace; font-size:12px;"></div>
-                    </div>
-                </div>
-            </div>
         </div>
         <?php
     }
