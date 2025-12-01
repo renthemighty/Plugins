@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.19
+ * Version: 1.5.20
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1803,6 +1803,13 @@ final class SPVS_Cost_Profit {
         echo '<p>' . esc_html__( 'Recalculate profit for orders in the selected date range using current cost data.', 'spvs-cost-profit' ) . '</p>';
         echo '<button type="button" id="spvs-recalc-orders-btn" class="button button-secondary" data-start-date="' . esc_attr( $start_date ) . '" data-end-date="' . esc_attr( $end_date ) . '">' . esc_html__( '🔄 Recalculate Orders', 'spvs-cost-profit' ) . '</button>';
         echo ' <span style="color:#666; font-size:12px;">' . sprintf( esc_html__( '(%s to %s)', 'spvs-cost-profit' ), $start_date, $end_date ) . '</span>';
+
+        // Debug panel
+        echo '<div id="spvs-recalc-debug" style="margin-top: 15px; padding: 10px; background: #f0f0f0; border-radius: 4px; font-family: monospace; font-size: 12px; display: none;">';
+        echo '<strong>Debug Log:</strong><br>';
+        echo '<div id="spvs-recalc-debug-content" style="max-height: 200px; overflow-y: auto;"></div>';
+        echo '</div>';
+
         echo '</div>';
 
         // Show view type indicator

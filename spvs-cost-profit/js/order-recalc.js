@@ -2,6 +2,13 @@ jQuery(document).ready(function($) {
     let totalRecalculated = 0;
     let dateRange = { start: '', end: '' };
 
+    function addDebugLog(message) {
+        $('#spvs-recalc-debug').show();
+        const timestamp = new Date().toLocaleTimeString();
+        $('#spvs-recalc-debug-content').append('[' + timestamp + '] ' + message + '<br>');
+        $('#spvs-recalc-debug-content').scrollTop($('#spvs-recalc-debug-content')[0].scrollHeight);
+    }
+
     // Start recalculation when button is clicked
     $(document).on('click', '#spvs-recalc-orders-btn', function(e) {
         e.preventDefault();
@@ -10,9 +17,15 @@ jQuery(document).ready(function($) {
         dateRange.start = $(this).data('start-date');
         dateRange.end = $(this).data('end-date');
 
+        addDebugLog('Button clicked - Date range: ' + dateRange.start + ' to ' + dateRange.end);
+
         if (!confirm('Recalculate profit for orders from ' + dateRange.start + ' to ' + dateRange.end + '?\n\nThis will update orders in this date range using current cost data.')) {
+            addDebugLog('User cancelled');
             return;
         }
+
+        // Clear previous debug logs
+        $('#spvs-recalc-debug-content').html('');
 
         // Show modal
         $('#spvs-recalc-modal').fadeIn();
@@ -21,12 +34,15 @@ jQuery(document).ready(function($) {
         // Reset counter
         totalRecalculated = 0;
 
+        addDebugLog('Starting AJAX request to: ' + spvsRecalcOrders.ajaxurl);
+
         // Start batch processing
         processNextRecalcBatch(0);
     });
 
     function processNextRecalcBatch(offset) {
         console.log('Starting recalc batch at offset:', offset, 'Date range:', dateRange);
+        addDebugLog('Processing batch at offset: ' + offset);
 
         $.ajax({
             url: spvsRecalcOrders.ajaxurl,
@@ -41,7 +57,9 @@ jQuery(document).ready(function($) {
             },
             success: function(response) {
                 console.log('AJAX response:', response);
+                addDebugLog('AJAX response received - success: ' + response.success);
                 if (response.success) {
+                    addDebugLog('Found ' + response.data.total + ' total orders, processed: ' + response.data.processed);
                     const data = response.data;
 
                     // Accumulate totals
@@ -71,6 +89,8 @@ jQuery(document).ready(function($) {
                 } else {
                     console.error('Recalc error:', response);
                     var errorMsg = response.data && response.data.message ? response.data.message : 'Unknown error';
+                    addDebugLog('ERROR: ' + errorMsg);
+                    addDebugLog('Full response: ' + JSON.stringify(response));
                     $('#spvs-recalc-progress-status').html('<strong style="color: #d63638;">❌ Error: ' + errorMsg + '</strong>');
                     $('#spvs-recalc-complete-btn').fadeIn();
                 }
@@ -83,6 +103,8 @@ jQuery(document).ready(function($) {
                 } else if (xhr.responseText) {
                     errorMsg = 'Server error: ' + xhr.status;
                 }
+                addDebugLog('AJAX ERROR: ' + status + ' - ' + error);
+                addDebugLog('Response text: ' + xhr.responseText.substring(0, 500));
                 $('#spvs-recalc-progress-status').html('<strong style="color: #d63638;">❌ ' + errorMsg + '</strong>');
                 $('#spvs-recalc-complete-btn').fadeIn();
             }
