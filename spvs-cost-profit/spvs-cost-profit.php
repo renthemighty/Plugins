@@ -167,7 +167,11 @@ final class SPVS_Cost_Profit_V2 {
         $data = $this->get_report_data( $start_date, $end_date );
 
         ?>
-        <div class="wrap" style="max-width: 100%;">
+        <div class="wrap">
+            <style>
+                .wrap { max-width: none !important; }
+                .spvs-full-width { width: 100%; max-width: none; }
+            </style>
             <h1>📊 Profit Reports</h1>
 
             <?php if ( isset( $_GET['recalc_success'] ) ) : ?>
@@ -272,7 +276,7 @@ final class SPVS_Cost_Profit_V2 {
                 </div>
 
                 <!-- Chart -->
-                <div class="card" style="padding: 20px; margin: 20px 0;">
+                <div class="card spvs-full-width" style="padding: 20px; margin: 20px 0;">
                     <canvas id="profit-chart" style="max-height: 400px;"></canvas>
                 </div>
 
@@ -310,7 +314,7 @@ final class SPVS_Cost_Profit_V2 {
                                     beginAtZero: true,
                                     ticks: {
                                         callback: function(value) {
-                                            return '<?php echo get_woocommerce_currency_symbol(); ?>' + value.toFixed(0);
+                                            return '$' + value.toFixed(0);
                                         }
                                     }
                                 }
@@ -321,9 +325,9 @@ final class SPVS_Cost_Profit_V2 {
                 </script>
 
                 <!-- Data Table -->
-                <div class="card" style="padding: 20px; margin: 20px 0;">
+                <div class="card spvs-full-width" style="padding: 20px; margin: 20px 0;">
                     <h2>Daily Breakdown</h2>
-                    <table class="wp-list-table widefat fixed striped">
+                    <table class="wp-list-table widefat fixed striped" style="width: 100%;">
                         <thead>
                             <tr>
                                 <th>Date</th>
