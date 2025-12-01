@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.0
+ * Version: 1.5.1
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -907,23 +907,17 @@ final class SPVS_Cost_Profit {
                 continue;
             }
 
-            // Check if we already have a cost set
-            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
-
             // Format the cost value
             $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
 
-            if ( $existing_cost && $existing_cost !== '' && $existing_cost !== '0' ) {
-                // Only update if COG cost is different
-                if ( (float) $existing_cost !== (float) $formatted_cost ) {
-                    update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
-                    $updated++;
-                } else {
-                    $skipped++;
-                }
+            // Always overwrite with COG cost (user requested full overwrite)
+            update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+
+            // Track if this was new or updated
+            if ( $existing_cost && $existing_cost !== '' ) {
+                $updated++;
             } else {
-                // No existing cost, import from COG
-                update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
                 $imported++;
             }
 
@@ -1010,18 +1004,17 @@ final class SPVS_Cost_Profit {
                 continue;
             }
 
-            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
+            // Format the cost value
             $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
 
-            if ( $existing_cost && $existing_cost !== '' && $existing_cost !== '0' ) {
-                if ( (float) $existing_cost !== (float) $formatted_cost ) {
-                    update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
-                    $updated++;
-                } else {
-                    $skipped++;
-                }
+            // Always overwrite with COG cost (user requested full overwrite)
+            update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+
+            // Track if this was new or updated
+            if ( $existing_cost && $existing_cost !== '' ) {
+                $updated++;
             } else {
-                update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
                 $imported++;
             }
         }
@@ -1717,9 +1710,8 @@ final class SPVS_Cost_Profit {
             echo '<ul style="margin:5px 0 10px 20px;">';
             echo '<li>' . esc_html__( 'Creates automatic backup before import', 'spvs-cost-profit' ) . '</li>';
             echo '<li>' . esc_html__( 'Imports costs from WooCommerce Cost of Goods (_wc_cog_cost)', 'spvs-cost-profit' ) . '</li>';
-            echo '<li>' . esc_html__( 'Only imports products with valid cost data (skips zero or empty values)', 'spvs-cost-profit' ) . '</li>';
-            echo '<li>' . esc_html__( 'Updates existing costs if COG value is different', 'spvs-cost-profit' ) . '</li>';
-            echo '<li>' . esc_html__( 'Skips products that already have the same cost set', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Skips only zero or empty COG values', 'spvs-cost-profit' ) . '</li>';
+            echo '<li><strong>' . esc_html__( 'Overwrites ALL existing costs with COG data', 'spvs-cost-profit' ) . '</strong></li>';
             echo '<li>' . esc_html__( 'Recalculates inventory totals after import', 'spvs-cost-profit' ) . '</li>';
             echo '</ul>';
 

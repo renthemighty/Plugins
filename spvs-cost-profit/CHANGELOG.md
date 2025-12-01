@@ -2,6 +2,21 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.5.1] - 2024-12-01
+
+### Changed
+- **Import Behavior - Full Overwrite** - Cost of Goods import now overwrites ALL existing costs
+  - Previous: Only updated if values were different (causing skips)
+  - Now: Always overwrites with COG data, regardless of existing value
+  - Still skips products with zero or empty COG values
+  - Updated UI to clarify that this is a full overwrite operation
+
+### Technical
+- Simplified import logic to always call `update_post_meta()` for non-zero COG values
+- Removed conditional checks that compared existing vs new values
+- "Updated" counter now tracks any product that had an existing cost (even if same value)
+- "Imported" counter tracks products that had no existing cost
+
 ## [1.5.0] - 2024-12-01
 
 ### Added
