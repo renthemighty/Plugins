@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.6.1
+ * Version: 1.6.2
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1725,6 +1725,20 @@ final class SPVS_Cost_Profit {
                 </form>
             </div>
 
+            <!-- Recalculation Tool -->
+            <div class="spvs-card">
+                <h2><?php esc_html_e( '🔄 Recalculate Profit', 'spvs-cost-profit' ); ?></h2>
+                <p class="description"><?php esc_html_e( 'Recalculate profit for orders in the selected date range using current product cost data. Use this if you have updated product costs and want to refresh historical order profits.', 'spvs-cost-profit' ); ?></p>
+                <button
+                    id="spvs-recalc-orders-btn"
+                    class="button button-secondary"
+                    data-start-date="<?php echo esc_attr( $start_date ); ?>"
+                    data-end-date="<?php echo esc_attr( $end_date ); ?>"
+                    style="margin-top: 10px;">
+                    <?php esc_html_e( '🔄 Recalculate Orders', 'spvs-cost-profit' ); ?>
+                </button>
+            </div>
+
             <!-- View Type Indicator -->
             <div class="spvs-alert spvs-alert-<?php echo $use_daily_view ? 'success' : 'info'; ?>">
                 <strong><?php echo $use_daily_view ? '📊 Daily Report View' : '📅 Monthly Report View'; ?></strong>
@@ -1810,6 +1824,32 @@ final class SPVS_Cost_Profit {
                     margin: 0;
                 }
             </style>
+
+            <!-- Recalculation Progress Modal -->
+            <div id="spvs-recalc-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.5); z-index:999999;">
+                <div style="position:relative; width:600px; max-width:90%; margin:100px auto; background:#fff; padding:30px; border-radius:8px; box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+                    <h2 style="margin-top:0;"><?php esc_html_e( '🔄 Recalculating Order Profit', 'spvs-cost-profit' ); ?></h2>
+
+                    <div style="margin:20px 0;">
+                        <div id="spvs-recalc-progress-bar" style="background:#2271b1; color:#fff; text-align:center; padding:10px; border-radius:4px; min-width:30px; transition:width 0.3s;">0%</div>
+                    </div>
+
+                    <p id="spvs-recalc-progress-status" style="margin:15px 0; font-weight:bold;">Initializing...</p>
+
+                    <div style="background:#f0f0f0; padding:15px; border-radius:4px; margin:15px 0;">
+                        <p style="margin:5px 0;"><strong><?php esc_html_e( 'Recalculated:', 'spvs-cost-profit' ); ?></strong> <span id="spvs-recalc-detail-count">0</span></p>
+                        <p style="margin:5px 0;"><strong><?php esc_html_e( 'Processed:', 'spvs-cost-profit' ); ?></strong> <span id="spvs-recalc-detail-processed">0 / 0</span></p>
+                    </div>
+
+                    <button id="spvs-recalc-complete-btn" class="button button-primary" style="display:none;"><?php esc_html_e( 'Close & Reload', 'spvs-cost-profit' ); ?></button>
+
+                    <!-- Debug Panel -->
+                    <div id="spvs-recalc-debug" style="display:none; margin-top:20px; border-top:1px solid #ddd; padding-top:15px;">
+                        <h3><?php esc_html_e( 'Debug Log', 'spvs-cost-profit' ); ?></h3>
+                        <div id="spvs-recalc-debug-content" style="background:#f9f9f9; padding:10px; border:1px solid #ddd; border-radius:4px; max-height:200px; overflow-y:auto; font-family:monospace; font-size:12px;"></div>
+                    </div>
+                </div>
+            </div>
         </div>
         <?php
     }
