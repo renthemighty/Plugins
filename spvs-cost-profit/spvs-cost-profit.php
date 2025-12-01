@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.8.7
+ * Version: 1.8.8
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -819,6 +819,12 @@ final class SPVS_Cost_Profit {
         $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01', strtotime( '-11 months' ) );
         $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-t' );
 
+        // Calculate date difference in days
+        $start_timestamp = strtotime( $start_date );
+        $end_timestamp = strtotime( $end_date );
+        $date_diff_days = ( $end_timestamp - $start_timestamp ) / ( 60 * 60 * 24 );
+        $show_detailed_table = ( $date_diff_days <= 90 ); // Only show table if 3 months or less
+
         $monthly_data = $this->get_monthly_profit_data( $start_date, $end_date );
 
         $export_url = add_query_arg( array(
@@ -888,35 +894,41 @@ final class SPVS_Cost_Profit {
             echo '<canvas id="spvs-profit-chart" style="max-height: 400px;"></canvas>';
             echo '</div>';
 
-            // Data table
-            echo '<table class="widefat striped" style="margin-top: 20px;">';
-            echo '<thead><tr>';
-            echo '<th>' . esc_html__( 'Month', 'spvs-cost-profit' ) . '</th>';
-            echo '<th>' . esc_html__( 'Orders', 'spvs-cost-profit' ) . '</th>';
-            echo '<th>' . esc_html__( 'Revenue', 'spvs-cost-profit' ) . '</th>';
-            echo '<th>' . esc_html__( 'Profit', 'spvs-cost-profit' ) . '</th>';
-            echo '<th>' . esc_html__( 'Margin %', 'spvs-cost-profit' ) . '</th>';
-            echo '<th>' . esc_html__( 'Avg Profit/Order', 'spvs-cost-profit' ) . '</th>';
-            echo '</tr></thead><tbody>';
+            // Data table - only show for date ranges 90 days or less
+            if ( $show_detailed_table ) {
+                echo '<table class="widefat striped" style="margin-top: 20px;">';
+                echo '<thead><tr>';
+                echo '<th>' . esc_html__( 'Month', 'spvs-cost-profit' ) . '</th>';
+                echo '<th>' . esc_html__( 'Orders', 'spvs-cost-profit' ) . '</th>';
+                echo '<th>' . esc_html__( 'Revenue', 'spvs-cost-profit' ) . '</th>';
+                echo '<th>' . esc_html__( 'Profit', 'spvs-cost-profit' ) . '</th>';
+                echo '<th>' . esc_html__( 'Margin %', 'spvs-cost-profit' ) . '</th>';
+                echo '<th>' . esc_html__( 'Avg Profit/Order', 'spvs-cost-profit' ) . '</th>';
+                echo '</tr></thead><tbody>';
 
-            foreach ( $monthly_data as $row ) {
-                $revenue = (float) $row->total_revenue;
-                $profit = (float) $row->total_profit;
-                $orders = (int) $row->order_count;
-                $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
-                $avg_profit = $orders > 0 ? $profit / $orders : 0;
+                foreach ( $monthly_data as $row ) {
+                    $revenue = (float) $row->total_revenue;
+                    $profit = (float) $row->total_profit;
+                    $orders = (int) $row->order_count;
+                    $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
+                    $avg_profit = $orders > 0 ? $profit / $orders : 0;
 
-                echo '<tr>';
-                echo '<td><strong>' . esc_html( $row->month ) . '</strong></td>';
-                echo '<td>' . esc_html( $orders ) . '</td>';
-                echo '<td>' . wp_kses_post( wc_price( $revenue ) ) . '</td>';
-                echo '<td>' . wp_kses_post( wc_price( $profit ) ) . '</td>';
-                echo '<td>' . number_format( $margin, 2 ) . '%</td>';
-                echo '<td>' . wp_kses_post( wc_price( $avg_profit ) ) . '</td>';
-                echo '</tr>';
+                    echo '<tr>';
+                    echo '<td><strong>' . esc_html( $row->month ) . '</strong></td>';
+                    echo '<td>' . esc_html( $orders ) . '</td>';
+                    echo '<td>' . wp_kses_post( wc_price( $revenue ) ) . '</td>';
+                    echo '<td>' . wp_kses_post( wc_price( $profit ) ) . '</td>';
+                    echo '<td>' . number_format( $margin, 2 ) . '%</td>';
+                    echo '<td>' . wp_kses_post( wc_price( $avg_profit ) ) . '</td>';
+                    echo '</tr>';
+                }
+
+                echo '</tbody></table>';
+            } else {
+                echo '<div class="notice notice-info" style="margin-top: 20px;"><p>';
+                echo esc_html__( 'Monthly breakdown table hidden for date ranges over 3 months. Use the chart and summary cards above, or narrow your date range to see the detailed table.', 'spvs-cost-profit' );
+                echo '</p></div>';
             }
-
-            echo '</tbody></table>';
 
             // Chart.js script
             ?>
