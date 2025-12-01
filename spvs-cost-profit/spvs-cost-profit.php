@@ -2,7 +2,8 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Simple, reliable cost tracking and profit reporting for WooCommerce
- * Version: 1.8.2
+ * Version: 1.8.3
+ * Update URI: https://github.com/renthemighty/Plugins
  * Author: Megatron
  * License: GPL-2.0+
  */
