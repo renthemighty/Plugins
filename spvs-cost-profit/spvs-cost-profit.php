@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.8.6
+ * Version: 1.8.7
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -416,21 +416,31 @@ final class SPVS_Cost_Profit {
 
         foreach ( $product_ids as $product_id ) {
             $cog_cost = get_post_meta( $product_id, '_wc_cog_cost', true );
-            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
 
-            if ( ! empty( $existing_cost ) && ! $overwrite ) {
+            // CRITICAL: Verify COG cost is valid before doing ANYTHING
+            if ( empty( $cog_cost ) || floatval( $cog_cost ) <= 0 ) {
                 $skipped++;
                 continue;
             }
 
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
+
+            // Skip if already has cost and not overwriting
+            if ( ! empty( $existing_cost ) && floatval( $existing_cost ) > 0 && ! $overwrite ) {
+                $skipped++;
+                continue;
+            }
+
+            // ONLY update if we have valid COG cost
             update_post_meta( $product_id, self::PRODUCT_COST_META, wc_format_decimal( $cog_cost ) );
 
-            if ( ! empty( $existing_cost ) ) {
+            if ( ! empty( $existing_cost ) && floatval( $existing_cost ) > 0 ) {
                 $updated++;
             } else {
                 $imported++;
             }
 
+            // ONLY delete COG data if successfully imported
             if ( $delete_after ) {
                 delete_post_meta( $product_id, '_wc_cog_cost' );
             }
