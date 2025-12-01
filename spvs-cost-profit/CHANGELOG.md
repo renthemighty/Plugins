@@ -2,6 +2,28 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.9] - 2024-12-01
+
+### Improved
+- **Import Throttling** - Cost of Goods import now processes in batches of 10 with 1 second delays
+  - Prevents server overload during large imports
+  - Maximum rate: 10 products per second
+  - Ensures all products are imported without timeout errors
+- **Backup Throttling** - Backup creation now processes in batches with delays
+  - Processes 100 products at a time with 0.1 second delays between batches
+  - Reduces server load during backup creation
+  - Prevents memory issues with large product catalogs
+- **Backup Retention** - Changed from 7 days to 2 days of backup retention
+  - Reduces database size and storage overhead
+  - Automatically deletes oldest backups when creating new ones
+  - Keeps only the 2 most recent daily backups
+
+### Technical
+- Import batching: 10 products per batch with `sleep(1)` between batches
+- Backup batching: 100 products per query with `usleep(100000)` between batches
+- Updated `MAX_BACKUPS` constant from 7 to 2
+- Backup version updated to 1.4.9
+
 ## [1.4.8] - 2024-12-01
 
 ### Added

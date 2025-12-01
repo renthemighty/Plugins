@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.8
+ * Version: 1.4.9
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -36,7 +36,7 @@ final class SPVS_Cost_Profit {
     const BACKUP_OPTION_PREFIX      = 'spvs_cost_backup_';
     const BACKUP_LATEST_OPTION      = 'spvs_cost_backup_latest';
     const BACKUP_COUNT_OPTION       = 'spvs_cost_backup_count';
-    const MAX_BACKUPS               = 7; // Keep 7 days of backups
+    const MAX_BACKUPS               = 2; // Keep 2 days of backups
 
     private static $instance = null;
 
@@ -413,25 +413,44 @@ final class SPVS_Cost_Profit {
     public function create_cost_data_backup() {
         global $wpdb;
 
-        // Get all cost data
-        $costs = $wpdb->get_results( "
-            SELECT pm.post_id, pm.meta_value as cost
-            FROM {$wpdb->postmeta} pm
-            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-            WHERE pm.meta_key = '" . self::PRODUCT_COST_META . "'
-            AND p.post_type IN ('product', 'product_variation')
-            AND p.post_status = 'publish'
-        ", ARRAY_A );
+        // Get all cost data in batches to reduce server load
+        $batch_size = 100;
+        $offset = 0;
+        $all_costs = array();
 
-        if ( empty( $costs ) ) return false;
+        while ( true ) {
+            $costs_batch = $wpdb->get_results( $wpdb->prepare( "
+                SELECT pm.post_id, pm.meta_value as cost
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = %s
+                AND p.post_type IN ('product', 'product_variation')
+                AND p.post_status = 'publish'
+                LIMIT %d OFFSET %d
+            ", self::PRODUCT_COST_META, $batch_size, $offset ), ARRAY_A );
+
+            if ( empty( $costs_batch ) ) {
+                break; // No more results
+            }
+
+            $all_costs = array_merge( $all_costs, $costs_batch );
+            $offset += $batch_size;
+
+            // Throttle: small delay between batches to reduce server load
+            if ( count( $costs_batch ) === $batch_size ) {
+                usleep( 100000 ); // 0.1 second delay between batches
+            }
+        }
+
+        if ( empty( $all_costs ) ) return false;
 
         // Create backup with timestamp
         $backup_key = self::BACKUP_OPTION_PREFIX . date( 'Y_m_d_H_i_s' );
         $backup_data = array(
             'timestamp' => time(),
-            'count'     => count( $costs ),
-            'data'      => $costs,
-            'version'   => '1.4.1'
+            'count'     => count( $all_costs ),
+            'data'      => $all_costs,
+            'version'   => '1.4.8'
         );
 
         // Save backup
@@ -786,6 +805,8 @@ final class SPVS_Cost_Profit {
         $imported = 0;
         $skipped = 0;
         $updated = 0;
+        $batch_size = 10; // Process 10 products at a time
+        $batch_count = 0;
 
         foreach ( $products as $product_data ) {
             $product_id = (int) $product_data['post_id'];
@@ -816,9 +837,11 @@ final class SPVS_Cost_Profit {
                 $imported++;
             }
 
-            // Add small delay every 200 products to avoid overload
-            if ( ( $imported + $updated ) % 200 === 0 ) {
-                usleep( 200000 ); // 0.2 seconds
+            // Batch throttling: delay 1 second after every 10 products (max 1 request/sec)
+            $batch_count++;
+            if ( $batch_count >= $batch_size ) {
+                sleep( 1 ); // 1 second delay between batches
+                $batch_count = 0;
             }
         }
 
@@ -1545,7 +1568,7 @@ final class SPVS_Cost_Profit {
         }
 
         echo '<div style="background:#f8f9fa; padding:15px; border-radius:5px; border-left:4px solid #2271b1; margin:15px 0;">';
-        echo '<p style="margin:0 0 10px 0;"><strong>' . esc_html__( 'Automatic Protection:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Your cost data is automatically backed up daily at 3:00 AM. Up to 7 backups are kept.', 'spvs-cost-profit' ) . '</p>';
+        echo '<p style="margin:0 0 10px 0;"><strong>' . esc_html__( 'Automatic Protection:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'Your cost data is automatically backed up daily at 3:00 AM. Up to 2 backups are kept.', 'spvs-cost-profit' ) . '</p>';
 
         if ( $latest_backup ) {
             echo '<p style="margin:0;"><strong>' . esc_html__( 'Latest Backup:', 'spvs-cost-profit' ) . '</strong> ' . esc_html( $latest_backup['date'] ) . ' (' . esc_html( $latest_backup['age'] ) . ') - ' . esc_html( $latest_backup['count'] ) . ' ' . esc_html__( 'products', 'spvs-cost-profit' ) . '</p>';
