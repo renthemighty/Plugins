@@ -129,8 +129,8 @@ final class SPVS_Cost_Profit {
     /** ---------------- Admin assets ---------------- */
     public function enqueue_admin_assets( $hook ) {
         if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook || 'woocommerce_page_spvs-dashboard' === $hook ) {
-            // Enqueue Chart.js for visualizations
-            wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
+            // Enqueue Chart.js for visualizations - using cdnjs for better reliability
+            wp_enqueue_script( 'chart-js', 'https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js', array(), '3.9.1', false );
 
             // Add inline CSS for progress modals
             wp_add_inline_style( 'wp-admin', $this->get_progress_modal_css() );
@@ -1967,22 +1967,27 @@ final class SPVS_Cost_Profit {
         }
 
         echo '<div class="spvs-card">';
-        echo '<canvas id="spvs-profit-chart" style="max-height: 400px;"></canvas>';
+        echo '<h2>' . esc_html__( $use_daily_view ? 'Daily Profit & Revenue Chart' : 'Monthly Profit & Revenue Chart', 'spvs-cost-profit' ) . '</h2>';
+        echo '<canvas id="spvs-profit-chart" width="400" height="200"></canvas>';
         echo '</div>';
         ?>
         <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            var ctx = document.getElementById('spvs-profit-chart');
-            if (!ctx) {
-                console.error('SPVS: Chart canvas element not found');
-                return;
-            }
-            if (typeof Chart === 'undefined') {
-                console.error('SPVS: Chart.js library not loaded');
-                return;
-            }
-            try {
-                new Chart(ctx, {
+        (function() {
+            // Wait for both DOM and Chart.js to be ready
+            function initChart() {
+                var ctx = document.getElementById('spvs-profit-chart');
+                if (!ctx) {
+                    console.error('SPVS: Chart canvas not found');
+                    return;
+                }
+                if (typeof Chart === 'undefined') {
+                    console.error('SPVS: Chart.js not loaded - check if CDN is blocked');
+                    ctx.parentElement.innerHTML = '<p style="color: #d63638; padding: 20px;">⚠️ Chart library failed to load. This may be due to a network issue or ad blocker.</p>';
+                    return;
+                }
+
+                try {
+                    new Chart(ctx, {
                     type: 'bar',
                     data: {
                         labels: <?php echo wp_json_encode( $labels ); ?>,
@@ -2022,10 +2027,19 @@ final class SPVS_Cost_Profit {
                         }
                     }
                 });
-            } catch (error) {
-                console.error('SPVS: Error rendering chart:', error);
+                } catch (error) {
+                    console.error('SPVS: Error creating chart:', error);
+                    ctx.parentElement.innerHTML = '<p style="color: #d63638; padding: 20px;">⚠️ Error rendering chart: ' + error.message + '</p>';
+                }
             }
-        });
+
+            // Try to init when DOM is ready
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initChart);
+            } else {
+                initChart();
+            }
+        })();
         </script>
         <?php
     }
