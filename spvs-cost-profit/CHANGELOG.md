@@ -2,6 +2,29 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.4.8] - 2024-12-01
+
+### Added
+- **WooCommerce Cost of Goods Import** - Migrate cost data from official WooCommerce Cost of Goods plugin
+  - Automatic detection of Cost of Goods data (`_wc_cog_cost` meta key)
+  - One-click import with automatic backup creation before import
+  - Smart import: only imports non-zero values, updates if different, skips if already set
+  - Shows detection panel with sample products and total count
+  - Import results showing: new imports, updates, and skipped products
+  - Preserves existing cost data (only updates if COG value is different)
+  - Automatic inventory recalculation after import
+
+### Technical
+- New detection function: `detect_cost_of_goods_data()` checks for `_wc_cog_cost` meta
+- New import function: `import_from_cost_of_goods()` handles migration with validation
+- Admin action: `spvs_import_from_cog` with nonce protection
+- Queries optimized to only process published products and variations
+- Batch processing with delays every 200 products to avoid server overload
+
+### References
+- [WooCommerce Cost of Goods Documentation](https://woocommerce.com/document/cost-of-goods-sold/)
+- Supports official WooCommerce Cost of Goods plugin meta key structure
+
 ## [1.4.7] - 2024-11-30
 
 ### Fixed

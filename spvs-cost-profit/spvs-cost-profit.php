@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.7
+ * Version: 1.4.8
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -110,6 +110,9 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_post_spvs_backup_costs_now', array( $this, 'handle_manual_backup' ) );
         add_action( 'admin_post_spvs_restore_costs', array( $this, 'handle_restore_costs' ) );
         add_action( 'admin_post_spvs_export_backup', array( $this, 'export_backup_data' ) );
+
+        /** Cost of Goods import */
+        add_action( 'admin_post_spvs_import_from_cog', array( $this, 'import_from_cost_of_goods' ) );
 
         /** Dedicated admin pages under WooCommerce */
         add_action( 'admin_menu', array( $this, 'register_admin_pages' ) );
@@ -699,6 +702,135 @@ final class SPVS_Cost_Profit {
 
         $msg = sprintf( 'import_done:%d:%d:%d:%d', $total, $updated, $skipped, $errors );
         wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) ); exit;
+    }
+
+    /** ---------------- Cost of Goods Import ---------------- */
+
+    /**
+     * Detect if WooCommerce Cost of Goods data exists
+     * Checks for _wc_cog_cost meta key (official WooCommerce Cost of Goods plugin)
+     *
+     * @return array Array with 'found' (bool), 'count' (int), 'sample_products' (array)
+     */
+    private function detect_cost_of_goods_data() {
+        global $wpdb;
+
+        // Check for _wc_cog_cost meta key (official WooCommerce Cost of Goods)
+        $count = $wpdb->get_var( "
+            SELECT COUNT(DISTINCT pm.post_id)
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+        " );
+
+        $count = (int) $count;
+
+        if ( $count === 0 ) {
+            return array(
+                'found' => false,
+                'count' => 0,
+                'sample_products' => array(),
+            );
+        }
+
+        // Get a few sample products to show
+        $samples = $wpdb->get_results( "
+            SELECT p.ID, p.post_title, pm.meta_value as cog_cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+            ORDER BY p.ID ASC
+            LIMIT 5
+        ", ARRAY_A );
+
+        return array(
+            'found' => true,
+            'count' => $count,
+            'sample_products' => $samples,
+        );
+    }
+
+    /**
+     * Import cost data from WooCommerce Cost of Goods plugin
+     * Copies _wc_cog_cost to _spvs_cost_price
+     */
+    public function import_from_cost_of_goods() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'You do not have permission to import cost data.', 'spvs-cost-profit' ) );
+        }
+        check_admin_referer( 'spvs_import_from_cog' );
+
+        global $wpdb;
+
+        // Create a backup first
+        $this->create_cost_data_backup();
+
+        // Get all products with _wc_cog_cost
+        $products = $wpdb->get_results( "
+            SELECT pm.post_id, pm.meta_value as cog_cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND pm.meta_value != '0'
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+        ", ARRAY_A );
+
+        $imported = 0;
+        $skipped = 0;
+        $updated = 0;
+
+        foreach ( $products as $product_data ) {
+            $product_id = (int) $product_data['post_id'];
+            $cog_cost = trim( $product_data['cog_cost'] );
+
+            if ( $cog_cost === '' || $cog_cost === '0' ) {
+                $skipped++;
+                continue;
+            }
+
+            // Check if we already have a cost set
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
+
+            // Format the cost value
+            $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
+
+            if ( $existing_cost && $existing_cost !== '' && $existing_cost !== '0' ) {
+                // Only update if COG cost is different
+                if ( (float) $existing_cost !== (float) $formatted_cost ) {
+                    update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                    $updated++;
+                } else {
+                    $skipped++;
+                }
+            } else {
+                // No existing cost, import from COG
+                update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                $imported++;
+            }
+
+            // Add small delay every 200 products to avoid overload
+            if ( ( $imported + $updated ) % 200 === 0 ) {
+                usleep( 200000 ); // 0.2 seconds
+            }
+        }
+
+        // Recalculate inventory totals after import
+        $this->recalculate_inventory_totals();
+
+        $msg = sprintf( 'cog_import_done:%d:%d:%d', $imported, $updated, $skipped );
+        wp_safe_redirect( add_query_arg( array(
+            'page' => 'spvs-inventory',
+            'spvs_msg' => rawurlencode( $msg )
+        ), admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     /** ---------------- Column helpers for CSV/Preview ---------------- */
@@ -1310,6 +1442,13 @@ final class SPVS_Cost_Profit {
                         echo '<div class="notice"><p>' . sprintf( esc_html__( 'Some rows did not match any product. You can %s.', 'spvs-cost-profit' ), '<a class="button" href="' . $miss_url . '">' . esc_html__( 'download unmatched rows', 'spvs-cost-profit' ) . '</a>' ) . '</p></div>';
                     }
                 }
+            } elseif ( 0 === strpos( $m, 'cog_import_done:' ) ) {
+                $parts = explode( ':', $m );
+                if ( count( $parts ) === 4 ) {
+                    printf( '<div class="notice notice-success is-dismissible"><p><strong>✅ ' . esc_html__( 'Cost of Goods Import Complete!', 'spvs-cost-profit' ) . '</strong><br/>%s</p></div>',
+                        esc_html( sprintf( __( 'Imported: %d new costs, Updated: %d existing costs, Skipped: %d (already set or zero)', 'spvs-cost-profit' ), (int)$parts[1], (int)$parts[2], (int)$parts[3] ) )
+                    );
+                }
             }
         }
 
@@ -1332,6 +1471,57 @@ final class SPVS_Cost_Profit {
         echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_cost_missing_csv' ) ) . '">' . esc_html__( 'Download items with Qty>0 & missing cost', 'spvs-cost-profit' ) . '</a>';
         echo '<a class="button" href="' . esc_url( admin_url( 'admin-post.php?action=spvs_recalc_inventory&_wpnonce=' . wp_create_nonce( 'spvs_recalc_inventory' ) ) ) . '">' . esc_html__( 'Recalculate Now', 'spvs-cost-profit' ) . '</a>';
         echo '</form>';
+
+        // Cost of Goods Import Section
+        $cog_data = $this->detect_cost_of_goods_data();
+        if ( $cog_data['found'] ) {
+            echo '<hr style="margin:18px 0;"><h2>📦 ' . esc_html__( 'Import from WooCommerce Cost of Goods', 'spvs-cost-profit' ) . ' <span style="font-size:14px; color:#00a32a; font-weight:normal;">(NEW in v1.4.8)</span></h2>';
+
+            echo '<div style="background:#e7f7e7; padding:15px; border-radius:5px; border-left:4px solid #00a32a; margin:15px 0;">';
+            echo '<p style="margin:0 0 10px 0;"><strong>✅ ' . esc_html__( 'Cost of Goods Data Detected!', 'spvs-cost-profit' ) . '</strong></p>';
+            printf( '<p style="margin:0 0 10px 0;">%s</p>',
+                sprintf( esc_html__( 'Found %d products with cost data from WooCommerce Cost of Goods plugin.', 'spvs-cost-profit' ), $cog_data['count'] )
+            );
+
+            if ( ! empty( $cog_data['sample_products'] ) ) {
+                echo '<details style="margin:10px 0;"><summary style="cursor:pointer; font-weight:600;">' . esc_html__( 'Show sample products', 'spvs-cost-profit' ) . '</summary>';
+                echo '<table style="margin-top:10px; border-collapse:collapse; width:100%; background:#fff;"><thead><tr style="background:#f0f0f0;">';
+                echo '<th style="padding:8px; text-align:left; border:1px solid #ddd;">' . esc_html__( 'Product ID', 'spvs-cost-profit' ) . '</th>';
+                echo '<th style="padding:8px; text-align:left; border:1px solid #ddd;">' . esc_html__( 'Product Name', 'spvs-cost-profit' ) . '</th>';
+                echo '<th style="padding:8px; text-align:left; border:1px solid #ddd;">' . esc_html__( 'COG Cost', 'spvs-cost-profit' ) . '</th>';
+                echo '</tr></thead><tbody>';
+                foreach ( $cog_data['sample_products'] as $sample ) {
+                    echo '<tr>';
+                    echo '<td style="padding:8px; border:1px solid #ddd;">' . esc_html( $sample['ID'] ) . '</td>';
+                    echo '<td style="padding:8px; border:1px solid #ddd;">' . esc_html( $sample['post_title'] ) . '</td>';
+                    echo '<td style="padding:8px; border:1px solid #ddd;">' . wp_kses_post( wc_price( $sample['cog_cost'] ) ) . '</td>';
+                    echo '</tr>';
+                }
+                echo '</tbody></table></details>';
+            }
+
+            echo '<p style="margin:10px 0 0 0;"><strong>' . esc_html__( 'How it works:', 'spvs-cost-profit' ) . '</strong></p>';
+            echo '<ul style="margin:5px 0 10px 20px;">';
+            echo '<li>' . esc_html__( 'Creates automatic backup before import', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Imports costs from WooCommerce Cost of Goods (_wc_cog_cost)', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Only imports products with valid cost data (skips zero or empty values)', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Updates existing costs if COG value is different', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Skips products that already have the same cost set', 'spvs-cost-profit' ) . '</li>';
+            echo '<li>' . esc_html__( 'Recalculates inventory totals after import', 'spvs-cost-profit' ) . '</li>';
+            echo '</ul>';
+
+            $import_url = add_query_arg( array(
+                'action'   => 'spvs_import_from_cog',
+                '_wpnonce' => wp_create_nonce( 'spvs_import_from_cog' ),
+            ), admin_url( 'admin-post.php' ) );
+
+            echo '<form method="post" action="' . esc_url( $import_url ) . '" style="margin-top:10px;" onsubmit="return confirm(\'' . esc_js( __( 'Import cost data from WooCommerce Cost of Goods? A backup will be created first.', 'spvs-cost-profit' ) ) . '\');">';
+            echo '<button type="submit" class="button button-primary" style="background:#00a32a; border-color:#00a32a;">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
+            echo ' <span style="color:#666; font-size:12px;">' . sprintf( esc_html__( '(%d products will be processed)', 'spvs-cost-profit' ), $cog_data['count'] ) . '</span>';
+            echo '</form>';
+
+            echo '</div>';
+        }
 
         // Data Backup & Restore Section
         $backups = $this->get_available_backups();
