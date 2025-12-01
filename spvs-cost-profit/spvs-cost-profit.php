@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.18
+ * Version: 1.5.19
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1145,15 +1145,21 @@ final class SPVS_Cost_Profit {
 
     /** ---------------- Order Profit Recalculation (Batch) ---------------- */
     public function ajax_recalc_orders_batch() {
+        // Log for debugging
+        error_log( 'SPVS Recalc: Starting batch processing' );
+
         check_ajax_referer( 'spvs_recalc_orders', 'nonce' );
 
         if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            error_log( 'SPVS Recalc: Permission denied' );
             wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
         }
 
         $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
         $batch_size = 20; // Process 20 orders at a time
         $is_first_batch = ( $offset === 0 );
+
+        error_log( 'SPVS Recalc: Offset=' . $offset . ', First batch=' . ( $is_first_batch ? 'yes' : 'no' ) );
 
         // Get date range from request
         $start_date = isset( $_POST['start_date'] ) ? sanitize_text_field( $_POST['start_date'] ) : '';
@@ -1176,13 +1182,19 @@ final class SPVS_Cost_Profit {
 
         // Get total count and cache order IDs for subsequent batches
         if ( $is_first_batch ) {
+            error_log( 'SPVS Recalc: Querying orders with args: ' . print_r( $order_args, true ) );
             $all_order_ids = wc_get_orders( $order_args );
+            error_log( 'SPVS Recalc: Query returned type: ' . gettype( $all_order_ids ) );
+
             if ( ! is_array( $all_order_ids ) ) {
+                error_log( 'SPVS Recalc: wc_get_orders did not return an array' );
                 $all_order_ids = array();
             }
             $total = count( $all_order_ids );
+            error_log( 'SPVS Recalc: Found ' . $total . ' orders' );
 
             if ( $total <= 0 ) {
+                error_log( 'SPVS Recalc: No orders found, sending error' );
                 wp_send_json_error( array(
                     'message' => 'No orders found in the selected date range (' . $start_date . ' to ' . $end_date . '). Please check the dates and try again.'
                 ) );
@@ -1191,11 +1203,14 @@ final class SPVS_Cost_Profit {
             // Cache both total and order IDs
             set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
             set_transient( 'spvs_recalc_order_ids', $all_order_ids, HOUR_IN_SECONDS );
+            error_log( 'SPVS Recalc: Cached total and IDs' );
         } else {
             $total = (int) get_transient( 'spvs_recalc_total' );
             $all_order_ids = get_transient( 'spvs_recalc_order_ids' );
+            error_log( 'SPVS Recalc: Retrieved from cache - total: ' . $total . ', IDs count: ' . ( is_array( $all_order_ids ) ? count( $all_order_ids ) : 'not array' ) );
 
             if ( ! $total || ! is_array( $all_order_ids ) ) {
+                error_log( 'SPVS Recalc: Cache expired or invalid' );
                 wp_send_json_error( array( 'message' => 'Session expired. Please refresh and try again.' ) );
             }
         }
