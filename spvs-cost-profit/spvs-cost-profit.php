@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.2
+ * Version: 1.5.3
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -115,6 +115,9 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_post_spvs_import_from_cog', array( $this, 'import_from_cost_of_goods' ) );
         add_action( 'wp_ajax_spvs_cog_import_batch', array( $this, 'ajax_import_cog_batch' ) );
 
+        /** Order profit recalculation */
+        add_action( 'wp_ajax_spvs_recalc_orders_batch', array( $this, 'ajax_recalc_orders_batch' ) );
+
         /** Dedicated admin pages under WooCommerce */
         add_action( 'admin_menu', array( $this, 'register_admin_pages' ) );
 
@@ -127,24 +130,33 @@ final class SPVS_Cost_Profit {
         if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook ) {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
+
+            // Add inline CSS for progress modals
+            wp_add_inline_style( 'wp-admin', $this->get_progress_modal_css() );
         }
 
         if ( 'woocommerce_page_spvs-inventory' === $hook ) {
             // Enqueue import progress modal script
-            wp_enqueue_script( 'spvs-cog-import', plugins_url( 'js/cog-import.js', __FILE__ ), array( 'jquery' ), '1.4.9', true );
+            wp_enqueue_script( 'spvs-cog-import', plugins_url( 'js/cog-import.js', __FILE__ ), array( 'jquery' ), '1.5.3', true );
             wp_localize_script( 'spvs-cog-import', 'spvsCogImport', array(
                 'ajaxurl' => admin_url( 'admin-ajax.php' ),
                 'nonce' => wp_create_nonce( 'spvs_cog_import' ),
             ) );
+        }
 
-            // Add inline CSS for progress modal
-            wp_add_inline_style( 'wp-admin', $this->get_progress_modal_css() );
+        if ( 'woocommerce_page_spvs-profit-reports' === $hook ) {
+            // Enqueue order recalculation progress modal script
+            wp_enqueue_script( 'spvs-order-recalc', plugins_url( 'js/order-recalc.js', __FILE__ ), array( 'jquery' ), '1.5.3', true );
+            wp_localize_script( 'spvs-order-recalc', 'spvsRecalcOrders', array(
+                'ajaxurl' => admin_url( 'admin-ajax.php' ),
+                'nonce' => wp_create_nonce( 'spvs_recalc_orders' ),
+            ) );
         }
     }
 
     private function get_progress_modal_css() {
         return '
-            #spvs-import-modal {
+            #spvs-import-modal, #spvs-recalc-modal {
                 display: none;
                 position: fixed;
                 z-index: 100000;
@@ -154,7 +166,7 @@ final class SPVS_Cost_Profit {
                 height: 100%;
                 background-color: rgba(0,0,0,0.7);
             }
-            #spvs-import-modal-content {
+            #spvs-import-modal-content, #spvs-recalc-modal-content {
                 background-color: #fff;
                 margin: 10% auto;
                 padding: 30px;
@@ -163,11 +175,11 @@ final class SPVS_Cost_Profit {
                 max-width: 600px;
                 box-shadow: 0 4px 20px rgba(0,0,0,0.3);
             }
-            #spvs-import-modal h2 {
+            #spvs-import-modal h2, #spvs-recalc-modal h2 {
                 margin-top: 0;
                 color: #2271b1;
             }
-            #spvs-progress-bar-container {
+            #spvs-progress-bar-container, #spvs-recalc-progress-bar-container {
                 width: 100%;
                 background-color: #e0e0e0;
                 border-radius: 10px;
@@ -175,7 +187,7 @@ final class SPVS_Cost_Profit {
                 margin: 20px 0;
                 overflow: hidden;
             }
-            #spvs-progress-bar {
+            #spvs-progress-bar, #spvs-recalc-progress-bar {
                 height: 100%;
                 background: linear-gradient(90deg, #00a32a 0%, #00ba37 100%);
                 width: 0%;
@@ -187,7 +199,7 @@ final class SPVS_Cost_Profit {
                 font-weight: bold;
                 font-size: 14px;
             }
-            #spvs-progress-status {
+            #spvs-progress-status, #spvs-recalc-progress-status {
                 text-align: center;
                 margin: 15px 0;
                 font-size: 16px;
@@ -443,7 +455,7 @@ final class SPVS_Cost_Profit {
 
         $batch_size = 250; $paged = 1;
         $tcop_total = 0.0; $retail_total = 0.0;
-        $processed = 0; $managed = 0; $qty_gt0 = 0;
+        $processed = 0; $managed = 0; $qty_gt0 = 0; $with_cost = 0;
 
         while ( true ) {
             $q = new WP_Query( array(
@@ -460,13 +472,29 @@ final class SPVS_Cost_Profit {
                 $product = wc_get_product( $pid ); if ( ! $product ) continue;
                 $processed++;
 
-                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 0;
-                if ( $product->managing_stock() ) $managed++;
-                if ( $qty > 0 ) $qty_gt0++;
-
-                if ( $qty <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
-
+                // Get unit cost - if no cost set, skip this product
                 $unit_cost = (float) $this->get_product_cost( $pid );
+                if ( $unit_cost <= 0 ) {
+                    delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                    delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                    continue;
+                }
+
+                $with_cost++;
+
+                // Get quantity - use stock quantity if managed, otherwise default to 1 for valuation
+                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 1;
+                if ( $product->managing_stock() ) {
+                    $managed++;
+                    if ( $qty > 0 ) $qty_gt0++;
+                    // If stock managed but qty is 0, skip from totals
+                    if ( $qty <= 0 ) {
+                        delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
+                        delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
+                        continue;
+                    }
+                }
+
                 $reg_price = (float) $product->get_regular_price();
                 $line_cost   = $unit_cost * $qty;
                 $line_retail = $reg_price * $qty;
@@ -482,12 +510,13 @@ final class SPVS_Cost_Profit {
         }
 
         update_option( self::INVENTORY_TOTALS_OPTION, array(
-            'tcop'    => wc_format_decimal( $tcop_total, wc_get_price_decimals() ),
-            'retail'  => wc_format_decimal( $retail_total, wc_get_price_decimals() ),
-            'count'   => (int) $processed,
-            'managed' => (int) $managed,
-            'qty_gt0' => (int) $qty_gt0,
-            'updated' => time(),
+            'tcop'      => wc_format_decimal( $tcop_total, wc_get_price_decimals() ),
+            'retail'    => wc_format_decimal( $retail_total, wc_get_price_decimals() ),
+            'count'     => (int) $processed,
+            'managed'   => (int) $managed,
+            'qty_gt0'   => (int) $qty_gt0,
+            'with_cost' => (int) $with_cost,
+            'updated'   => time(),
         ), false );
     }
 
@@ -1070,6 +1099,72 @@ final class SPVS_Cost_Profit {
         ) );
     }
 
+    /** ---------------- Order Profit Recalculation (Batch) ---------------- */
+    public function ajax_recalc_orders_batch() {
+        check_ajax_referer( 'spvs_recalc_orders', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
+        }
+
+        $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+        $batch_size = 20; // Process 20 orders at a time
+        $is_first_batch = ( $offset === 0 );
+
+        // Get total count (cache it for subsequent batches)
+        if ( $is_first_batch ) {
+            $total = (int) wc_orders_count( apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
+            set_transient( 'spvs_recalc_total', $total, HOUR_IN_SECONDS );
+        } else {
+            $total = (int) get_transient( 'spvs_recalc_total' );
+            if ( ! $total ) {
+                $total = (int) wc_orders_count( apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) ) );
+            }
+        }
+
+        if ( $total <= 0 ) {
+            wp_send_json_error( array( 'message' => 'No orders found to recalculate' ) );
+        }
+
+        // Get batch of orders
+        $orders = wc_get_orders( array(
+            'status' => apply_filters( 'spvs_profit_report_order_statuses', array( 'completed', 'processing' ) ),
+            'limit'  => $batch_size,
+            'offset' => $offset,
+            'orderby' => 'ID',
+            'order'   => 'ASC',
+        ) );
+
+        $recalculated = 0;
+        foreach ( $orders as $order ) {
+            if ( ! $order instanceof WC_Order ) continue;
+
+            // Force recalculation by removing stored profit
+            $order->delete_meta_data( self::ORDER_TOTAL_PROFIT_META );
+            $order->save_meta_data();
+
+            // Recalculate with current costs
+            $this->recalculate_order_total_profit( $order );
+            $recalculated++;
+        }
+
+        $processed = $offset + $recalculated;
+        $is_complete = ( $processed >= $total || empty( $orders ) );
+
+        // Clean up transient on completion
+        if ( $is_complete ) {
+            delete_transient( 'spvs_recalc_total' );
+        }
+
+        wp_send_json_success( array(
+            'processed'    => $processed,
+            'total'        => $total,
+            'recalculated' => $recalculated,
+            'complete'     => $is_complete,
+            'percentage'   => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100
+        ) );
+    }
+
     /** ---------------- Column helpers for CSV/Preview ---------------- */
     private function spvs_get_available_columns() {
         $cols = array(
@@ -1339,6 +1434,14 @@ final class SPVS_Cost_Profit {
         echo '<div class="wrap">';
         echo '<h1>' . esc_html__( 'Monthly Profit Reports', 'spvs-cost-profit' ) . '</h1>';
 
+        // Show success message if redirected after recalculation
+        if ( isset( $_GET['spvs_recalc_done'] ) ) {
+            $recalc_count = (int) $_GET['spvs_recalc_done'];
+            echo '<div class="notice notice-success is-dismissible"><p>';
+            echo sprintf( esc_html__( '✅ Successfully recalculated profit for %d orders using current cost data!', 'spvs-cost-profit' ), $recalc_count );
+            echo '</p></div>';
+        }
+
         // Date range selector
         echo '<form method="get" style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc; display: inline-block;">';
         echo '<input type="hidden" name="page" value="spvs-profit-reports" />';
@@ -1349,6 +1452,13 @@ final class SPVS_Cost_Profit {
         echo '<button class="button button-primary" style="margin-left: 15px;">' . esc_html__( 'Update', 'spvs-cost-profit' ) . '</button> ';
         echo '<a class="button" href="' . esc_url( $export_url ) . '" style="margin-left: 10px;">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
         echo '</form>';
+
+        // Recalculate All Orders button
+        echo '<div style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc;">';
+        echo '<h3 style="margin-top:0;">' . esc_html__( 'Recalculate Historical Profit', 'spvs-cost-profit' ) . '</h3>';
+        echo '<p>' . esc_html__( 'If you imported costs after orders were placed, use this to recalculate profit for all historical orders using current cost data.', 'spvs-cost-profit' ) . '</p>';
+        echo '<button type="button" id="spvs-recalc-orders-btn" class="button button-secondary">' . esc_html__( '🔄 Recalculate All Orders', 'spvs-cost-profit' ) . '</button>';
+        echo '</div>';
 
         if ( empty( $monthly_data ) ) {
             echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
@@ -1487,6 +1597,23 @@ final class SPVS_Cost_Profit {
             </script>
             <?php
         }
+
+        // Progress Modal for Recalculation
+        echo '<div id="spvs-recalc-modal">';
+        echo '<div id="spvs-recalc-modal-content">';
+        echo '<h2>🔄 ' . esc_html__( 'Recalculating Order Profit', 'spvs-cost-profit' ) . '</h2>';
+        echo '<div id="spvs-recalc-progress-bar-container">';
+        echo '<div id="spvs-recalc-progress-bar">0%</div>';
+        echo '</div>';
+        echo '<p id="spvs-recalc-progress-status">' . esc_html__( 'Initializing...', 'spvs-cost-profit' ) . '</p>';
+        echo '<div style="margin-top:15px; font-size:13px; color:#666;">';
+        echo '<strong>' . esc_html__( 'Details:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo esc_html__( 'Recalculated:', 'spvs-cost-profit' ) . ' <span id="spvs-recalc-detail-count">0</span><br/>';
+        echo esc_html__( 'Processed:', 'spvs-cost-profit' ) . ' <span id="spvs-recalc-detail-processed">0 / 0</span>';
+        echo '</div>';
+        echo '<button type="button" id="spvs-recalc-complete-btn" class="button button-primary" style="margin-top:20px; display:none;">' . esc_html__( 'Close & Reload Page', 'spvs-cost-profit' ) . '</button>';
+        echo '</div>';
+        echo '</div>';
 
         echo '</div>';
     }
@@ -1694,7 +1821,27 @@ final class SPVS_Cost_Profit {
         echo '<strong>Spread:</strong> ' . wp_kses_post( wc_price( $retail - $tcop ) ) . '</p>';
         if ( $updated ) echo '<p style="opacity:.75;">' . esc_html__( 'Updated', 'spvs-cost-profit' ) . ' ' . esc_html( human_time_diff( $updated, time() ) ) . ' ' . esc_html__( 'ago', 'spvs-cost-profit' ) . '</p>';
         echo '<p>' . esc_html__( 'Items processed:', 'spvs-cost-profit' ) . ' ' . esc_html( $count ) . ' · ' . esc_html__( 'Managing stock:', 'spvs-cost-profit' ) . ' ' . esc_html( $managed ) . ' · ' . esc_html__( 'Qty > 0:', 'spvs-cost-profit' ) . ' ' . esc_html( $qty_gt0 ) . '</p>';
+
+        // Warning if TCOP is 0 but there are costs in the database
+        if ( $tcop == 0 && $count > 0 ) {
+            global $wpdb;
+            $cost_count = $wpdb->get_var( $wpdb->prepare(
+                "SELECT COUNT(*) FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value != '' AND meta_value != '0'",
+                self::PRODUCT_COST_META
+            ) );
+            if ( $cost_count > 0 ) {
+                echo '<div class="notice notice-warning inline" style="margin:15px 0; padding:10px;"><p>';
+                echo '<strong>⚠️ ' . esc_html__( 'TCOP is $0 but costs are set!', 'spvs-cost-profit' ) . '</strong><br/>';
+                echo sprintf( esc_html__( 'Found %d products with costs, but TCOP = $0. This usually means:', 'spvs-cost-profit' ), $cost_count ) . '<br/>';
+                echo '• ' . esc_html__( 'Products don\'t have "Manage stock" enabled in WooCommerce', 'spvs-cost-profit' ) . '<br/>';
+                echo '• ' . esc_html__( 'Stock quantities are set to 0', 'spvs-cost-profit' ) . '<br/>';
+                echo '<strong>' . esc_html__( 'Fix: Enable stock management on your products and set quantities, then click "Recalculate Now"', 'spvs-cost-profit' ) . '</strong>';
+                echo '</p></div>';
+            }
+        }
+
         echo '<p style="margin-top:6px; opacity:.8;">' . esc_html__( 'Note: If a variation has no cost set, it will use the parent product cost automatically.', 'spvs-cost-profit' ) . '</p>';
+        echo '<p style="margin-top:6px; opacity:.8;"><strong>' . esc_html__( 'Important:', 'spvs-cost-profit' ) . '</strong> ' . esc_html__( 'TCOP only counts products with stock management enabled and quantity > 0.', 'spvs-cost-profit' ) . '</p>';
 
         echo '<form method="get" style="margin:12px 0; display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">';
         echo '<input type="hidden" name="page" value="spvs-inventory" />';

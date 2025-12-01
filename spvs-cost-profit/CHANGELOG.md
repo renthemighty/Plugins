@@ -2,6 +2,35 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.5.3] - 2024-12-01
+
+### Added
+- **Historical Order Profit Recalculation** - Recalculate profit for all past orders using current cost data
+  - New "Recalculate All Orders" button on profit reports page
+  - Real-time progress modal with batch processing (20 orders per batch)
+  - Forces recalculation even if profit was previously calculated
+  - Perfect for after importing costs from Cost of Goods or other sources
+  - Batch processing with 500ms delays to prevent server overload
+
+### Changed
+- **TCOP Calculation Logic** - Now includes ALL products with costs set
+  - Previous: Only counted products with stock management enabled and quantity > 0
+  - Now: Counts all products with costs, uses quantity of 1 for non-stock-managed products
+  - Stock-managed products with zero quantity are still excluded from totals
+  - More accurate inventory valuation for catalogs without stock management
+
+### Fixed
+- TCOP showing $0 after Cost of Goods import due to products not having stock management enabled
+- Historical orders showing $0 profit/margin when costs were imported after orders were placed
+
+### Technical
+- New AJAX endpoint: `wp_ajax_spvs_recalc_orders_batch`
+- New JavaScript file: `js/order-recalc.js` for recalculation progress tracking
+- Order profit recalculation: `ajax_recalc_orders_batch()` method
+- Forces recalculation by deleting stored profit meta before recalculating
+- Updated inventory totals option to include `with_cost` counter
+- Modal CSS updated to support both import and recalculation modals
+
 ## [1.5.2] - 2024-12-01
 
 ### Added
