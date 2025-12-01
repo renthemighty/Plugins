@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.9
+ * Version: 1.5.10
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -504,7 +504,27 @@ final class SPVS_Cost_Profit {
                 $unit_cost = (float) $this->get_product_cost( $pid );
                 $sell_price = (float) $product->get_price();
 
-                // STRICT CHECK: Skip if no valid price
+                // Fallback 1: Try regular price if get_price() returns 0
+                if ( $sell_price <= 0 ) {
+                    $sell_price = (float) $product->get_regular_price();
+                }
+
+                // Fallback 2: For variations without a price, try to get parent price
+                if ( $sell_price <= 0 && $product->is_type( 'variation' ) ) {
+                    $parent_id = $product->get_parent_id();
+                    if ( $parent_id ) {
+                        $parent_product = wc_get_product( $parent_id );
+                        if ( $parent_product ) {
+                            // Try parent's active price first, then regular price
+                            $sell_price = (float) $parent_product->get_price();
+                            if ( $sell_price <= 0 ) {
+                                $sell_price = (float) $parent_product->get_regular_price();
+                            }
+                        }
+                    }
+                }
+
+                // STRICT CHECK: Skip if no valid price (even after parent fallback)
                 if ( $sell_price <= 0 ) {
                     delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META );
                     delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META );
@@ -1574,7 +1594,23 @@ final class SPVS_Cost_Profit {
         $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01', strtotime( '-11 months' ) );
         $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-t' );
 
-        $monthly_data = $this->get_monthly_profit_data( $start_date, $end_date );
+        // Calculate date difference in months
+        $start_obj = new DateTime( $start_date );
+        $end_obj = new DateTime( $end_date );
+        $interval = $start_obj->diff( $end_obj );
+        $months_diff = ( $interval->y * 12 ) + $interval->m;
+        $days_diff = $interval->days;
+
+        // Use daily view if <= 2 months, otherwise monthly
+        $use_daily_view = ( $months_diff <= 2 || $days_diff <= 60 );
+
+        if ( $use_daily_view ) {
+            $report_data = $this->get_daily_profit_data( $start_date, $end_date );
+            $view_type = 'daily';
+        } else {
+            $report_data = $this->get_monthly_profit_data( $start_date, $end_date );
+            $view_type = 'monthly';
+        }
 
         $export_url = add_query_arg( array(
             'action'     => 'spvs_export_monthly_profit',
@@ -1584,7 +1620,7 @@ final class SPVS_Cost_Profit {
         ), admin_url( 'admin-post.php' ) );
 
         echo '<div class="wrap">';
-        echo '<h1>' . esc_html__( 'Monthly Profit Reports', 'spvs-cost-profit' ) . '</h1>';
+        echo '<h1>' . esc_html__( 'Profit Reports', 'spvs-cost-profit' ) . '</h1>';
 
         // Show success message if redirected after recalculation
         if ( isset( $_GET['spvs_recalc_done'] ) ) {
@@ -1594,15 +1630,72 @@ final class SPVS_Cost_Profit {
             echo '</p></div>';
         }
 
-        // Date range selector
-        echo '<form method="get" style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #ccc; display: inline-block;">';
+        // Quick date range selectors
+        echo '<div style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;">';
+        echo '<h3 style="margin: 0 0 12px 0; font-size: 16px;">' . esc_html__( '📅 Quick Select', 'spvs-cost-profit' ) . '</h3>';
+        echo '<div style="display: flex; gap: 8px; flex-wrap: wrap;">';
+
+        $quick_ranges = array(
+            'this_month' => array(
+                'label' => __( 'This Month', 'spvs-cost-profit' ),
+                'start' => date( 'Y-m-01' ),
+                'end'   => date( 'Y-m-t' ),
+            ),
+            'last_month' => array(
+                'label' => __( 'Last Month', 'spvs-cost-profit' ),
+                'start' => date( 'Y-m-01', strtotime( '-1 month' ) ),
+                'end'   => date( 'Y-m-t', strtotime( '-1 month' ) ),
+            ),
+            'last_2_months' => array(
+                'label' => __( 'Last 2 Months', 'spvs-cost-profit' ),
+                'start' => date( 'Y-m-01', strtotime( '-1 month' ) ),
+                'end'   => date( 'Y-m-t' ),
+            ),
+            'last_3_months' => array(
+                'label' => __( 'Last 3 Months', 'spvs-cost-profit' ),
+                'start' => date( 'Y-m-01', strtotime( '-2 months' ) ),
+                'end'   => date( 'Y-m-t' ),
+            ),
+            'last_6_months' => array(
+                'label' => __( 'Last 6 Months', 'spvs-cost-profit' ),
+                'start' => date( 'Y-m-01', strtotime( '-5 months' ) ),
+                'end'   => date( 'Y-m-t' ),
+            ),
+            'this_year' => array(
+                'label' => __( 'This Year', 'spvs-cost-profit' ),
+                'start' => date( 'Y-01-01' ),
+                'end'   => date( 'Y-12-31' ),
+            ),
+        );
+
+        foreach ( $quick_ranges as $key => $range ) {
+            $url = add_query_arg( array(
+                'page'       => 'spvs-profit-reports',
+                'start_date' => $range['start'],
+                'end_date'   => $range['end'],
+            ), admin_url( 'admin.php' ) );
+
+            $is_active = ( $start_date === $range['start'] && $end_date === $range['end'] );
+            $style = $is_active ? 'background: #2271b1; color: white; border-color: #2271b1;' : '';
+
+            echo '<a href="' . esc_url( $url ) . '" class="button" style="' . esc_attr( $style ) . '">' . esc_html( $range['label'] ) . '</a>';
+        }
+
+        echo '</div>';
+        echo '</div>';
+
+        // Custom Date range selector
+        echo '<form method="get" style="margin: 20px 0; padding: 15px; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px;">';
+        echo '<h3 style="margin: 0 0 12px 0; font-size: 16px;">' . esc_html__( '📆 Custom Date Range', 'spvs-cost-profit' ) . '</h3>';
         echo '<input type="hidden" name="page" value="spvs-profit-reports" />';
-        echo '<label><strong>' . esc_html__( 'Start Date:', 'spvs-cost-profit' ) . '</strong> ';
-        echo '<input type="date" name="start_date" value="' . esc_attr( $start_date ) . '" /></label> ';
-        echo '<label style="margin-left: 15px;"><strong>' . esc_html__( 'End Date:', 'spvs-cost-profit' ) . '</strong> ';
-        echo '<input type="date" name="end_date" value="' . esc_attr( $end_date ) . '" /></label> ';
-        echo '<button class="button button-primary" style="margin-left: 15px;">' . esc_html__( 'Update', 'spvs-cost-profit' ) . '</button> ';
-        echo '<a class="button" href="' . esc_url( $export_url ) . '" style="margin-left: 10px;">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '<div style="display: flex; gap: 15px; align-items: end; flex-wrap: wrap;">';
+        echo '<label><strong>' . esc_html__( 'Start Date:', 'spvs-cost-profit' ) . '</strong><br>';
+        echo '<input type="date" name="start_date" value="' . esc_attr( $start_date ) . '" /></label>';
+        echo '<label><strong>' . esc_html__( 'End Date:', 'spvs-cost-profit' ) . '</strong><br>';
+        echo '<input type="date" name="end_date" value="' . esc_attr( $end_date ) . '" /></label>';
+        echo '<button class="button button-primary">' . esc_html__( 'Update', 'spvs-cost-profit' ) . '</button>';
+        echo '<a class="button" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '</div>';
         echo '</form>';
 
         // Recalculate All Orders button
@@ -1613,18 +1706,26 @@ final class SPVS_Cost_Profit {
         echo ' <span style="color:#666; font-size:12px;">' . sprintf( esc_html__( '(%s to %s)', 'spvs-cost-profit' ), $start_date, $end_date ) . '</span>';
         echo '</div>';
 
-        if ( empty( $monthly_data ) ) {
+        // Show view type indicator
+        echo '<div style="background: ' . ( $use_daily_view ? '#e7f7e7' : '#f0f6fc' ) . '; padding: 10px 15px; border-radius: 5px; margin: 15px 0; border-left: 4px solid ' . ( $use_daily_view ? '#00a32a' : '#2271b1' ) . ';">';
+        echo '<strong>' . ( $use_daily_view ? '📊 Daily Report View' : '📅 Monthly Report View' ) . '</strong>';
+        echo '<span style="margin-left: 10px; color: #666; font-size: 13px;">' . sprintf( __( 'Showing %s data', 'spvs-cost-profit' ), $use_daily_view ? 'daily' : 'monthly' ) . '</span>';
+        echo '</div>';
+
+        if ( empty( $report_data ) ) {
             echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
         } else {
             // Prepare data for chart
-            $months = array();
+            $labels = array();
             $profits = array();
             $revenues = array();
             $total_profit = 0;
             $total_revenue = 0;
 
-            foreach ( $monthly_data as $row ) {
-                $months[] = $row->month;
+            foreach ( $report_data as $row ) {
+                // Use 'date' for daily or 'month' for monthly
+                $label = isset( $row->date ) ? $row->date : $row->month;
+                $labels[] = $label;
                 $profit = (float) $row->total_profit;
                 $revenue = (float) $row->total_revenue;
                 $profits[] = $profit;
@@ -1670,7 +1771,8 @@ final class SPVS_Cost_Profit {
             echo '<th>' . esc_html__( 'Avg Profit/Order', 'spvs-cost-profit' ) . '</th>';
             echo '</tr></thead><tbody>';
 
-            foreach ( $monthly_data as $row ) {
+            foreach ( $report_data as $row ) {
+                $period_label = isset( $row->date ) ? $row->date : $row->month;
                 $revenue = (float) $row->total_revenue;
                 $profit = (float) $row->total_profit;
                 $orders = (int) $row->order_count;
@@ -1678,7 +1780,7 @@ final class SPVS_Cost_Profit {
                 $avg_profit = $orders > 0 ? $profit / $orders : 0;
 
                 echo '<tr>';
-                echo '<td><strong>' . esc_html( $row->month ) . '</strong></td>';
+                echo '<td><strong>' . esc_html( $period_label ) . '</strong></td>';
                 echo '<td>' . esc_html( $orders ) . '</td>';
                 echo '<td>' . wp_kses_post( wc_price( $revenue ) ) . '</td>';
                 echo '<td>' . wp_kses_post( wc_price( $profit ) ) . '</td>';
@@ -1698,7 +1800,7 @@ final class SPVS_Cost_Profit {
                     new Chart(ctx, {
                         type: 'bar',
                         data: {
-                            labels: <?php echo wp_json_encode( $months ); ?>,
+                            labels: <?php echo wp_json_encode( $labels ); ?>,
                             datasets: [{
                                 label: '<?php echo esc_js( __( 'Profit', 'spvs-cost-profit' ) ); ?>',
                                 data: <?php echo wp_json_encode( $profits ); ?>,
