@@ -2,6 +2,30 @@
 
 All notable changes to SPVS Cost & Profit for WooCommerce will be documented in this file.
 
+## [1.5.0] - 2024-12-01
+
+### Added
+- **Real-Time Progress Modal** - Visual progress tracking for Cost of Goods import
+  - Live progress bar showing percentage complete
+  - Real-time counters: Imported, Updated, Skipped, Processed
+  - AJAX-based batch processing with visual feedback
+  - Modal overlay prevents page navigation during import
+  - "Close & Reload Page" button when complete
+  - Success message shown after modal closes
+
+### Improved
+- Import now uses AJAX instead of page reload
+- Better user experience with visual progress feedback
+- Import completion summary shown only after all products processed
+- No more guessing if import is still running or stuck
+
+### Technical
+- New AJAX action: `wp_ajax_spvs_cog_import_batch`
+- JavaScript file: `js/cog-import.js` with jQuery-based progress handling
+- Inline CSS for modal styling (no external CSS file needed)
+- Progress data stored in transients during multi-batch processing
+- 1 second delay between batches maintained for server health
+
 ## [1.4.9] - 2024-12-01
 
 ### Improved

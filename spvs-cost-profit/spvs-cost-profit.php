@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.4.9
+ * Version: 1.5.0
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -113,6 +113,7 @@ final class SPVS_Cost_Profit {
 
         /** Cost of Goods import */
         add_action( 'admin_post_spvs_import_from_cog', array( $this, 'import_from_cost_of_goods' ) );
+        add_action( 'wp_ajax_spvs_cog_import_batch', array( $this, 'ajax_import_cog_batch' ) );
 
         /** Dedicated admin pages under WooCommerce */
         add_action( 'admin_menu', array( $this, 'register_admin_pages' ) );
@@ -127,6 +128,95 @@ final class SPVS_Cost_Profit {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
         }
+
+        if ( 'woocommerce_page_spvs-inventory' === $hook ) {
+            // Enqueue import progress modal script
+            wp_enqueue_script( 'spvs-cog-import', plugins_url( 'js/cog-import.js', __FILE__ ), array( 'jquery' ), '1.4.9', true );
+            wp_localize_script( 'spvs-cog-import', 'spvsCogImport', array(
+                'ajaxurl' => admin_url( 'admin-ajax.php' ),
+                'nonce' => wp_create_nonce( 'spvs_cog_import' ),
+            ) );
+
+            // Add inline CSS for progress modal
+            wp_add_inline_style( 'wp-admin', $this->get_progress_modal_css() );
+        }
+    }
+
+    private function get_progress_modal_css() {
+        return '
+            #spvs-import-modal {
+                display: none;
+                position: fixed;
+                z-index: 100000;
+                left: 0;
+                top: 0;
+                width: 100%;
+                height: 100%;
+                background-color: rgba(0,0,0,0.7);
+            }
+            #spvs-import-modal-content {
+                background-color: #fff;
+                margin: 10% auto;
+                padding: 30px;
+                border-radius: 8px;
+                width: 90%;
+                max-width: 600px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            }
+            #spvs-import-modal h2 {
+                margin-top: 0;
+                color: #2271b1;
+            }
+            #spvs-progress-bar-container {
+                width: 100%;
+                background-color: #e0e0e0;
+                border-radius: 10px;
+                height: 30px;
+                margin: 20px 0;
+                overflow: hidden;
+            }
+            #spvs-progress-bar {
+                height: 100%;
+                background: linear-gradient(90deg, #00a32a 0%, #00ba37 100%);
+                width: 0%;
+                transition: width 0.3s ease;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            #spvs-progress-status {
+                text-align: center;
+                margin: 15px 0;
+                font-size: 16px;
+                color: #333;
+            }
+            #spvs-progress-details {
+                background: #f0f0f0;
+                padding: 15px;
+                border-radius: 5px;
+                margin: 15px 0;
+                font-family: monospace;
+                font-size: 13px;
+            }
+            #spvs-progress-details div {
+                margin: 5px 0;
+            }
+            .spvs-progress-label {
+                font-weight: bold;
+                display: inline-block;
+                width: 120px;
+            }
+            #spvs-import-complete-btn {
+                display: none;
+                margin-top: 20px;
+                width: 100%;
+                padding: 12px;
+                font-size: 16px;
+            }
+        ';
     }
 
     /** ---------------- Product admin ---------------- */
@@ -856,6 +946,106 @@ final class SPVS_Cost_Profit {
         exit;
     }
 
+    /**
+     * AJAX handler for batch import with progress tracking
+     */
+    public function ajax_import_cog_batch() {
+        check_ajax_referer( 'spvs_cog_import', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
+        }
+
+        global $wpdb;
+
+        $offset = isset( $_POST['offset'] ) ? (int) $_POST['offset'] : 0;
+        $batch_size = 10; // Process 10 at a time
+        $is_first_batch = ( $offset === 0 );
+
+        // Create backup on first batch
+        if ( $is_first_batch ) {
+            $this->create_cost_data_backup();
+        }
+
+        // Get total count (only on first batch)
+        if ( $is_first_batch ) {
+            $total = $wpdb->get_var( "
+                SELECT COUNT(DISTINCT pm.post_id)
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = '_wc_cog_cost'
+                AND pm.meta_value != ''
+                AND pm.meta_value != '0'
+                AND p.post_type IN ('product', 'product_variation')
+                AND p.post_status = 'publish'
+            " );
+            set_transient( 'spvs_cog_import_total', $total, HOUR_IN_SECONDS );
+        } else {
+            $total = get_transient( 'spvs_cog_import_total' );
+        }
+
+        // Get batch of products
+        $products = $wpdb->get_results( $wpdb->prepare( "
+            SELECT pm.post_id, pm.meta_value as cog_cost
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = '_wc_cog_cost'
+            AND pm.meta_value != ''
+            AND pm.meta_value != '0'
+            AND p.post_type IN ('product', 'product_variation')
+            AND p.post_status = 'publish'
+            LIMIT %d OFFSET %d
+        ", $batch_size, $offset ), ARRAY_A );
+
+        $imported = 0;
+        $updated = 0;
+        $skipped = 0;
+
+        foreach ( $products as $product_data ) {
+            $product_id = (int) $product_data['post_id'];
+            $cog_cost = trim( $product_data['cog_cost'] );
+
+            if ( $cog_cost === '' || $cog_cost === '0' ) {
+                $skipped++;
+                continue;
+            }
+
+            $existing_cost = get_post_meta( $product_id, self::PRODUCT_COST_META, true );
+            $formatted_cost = wc_format_decimal( $cog_cost, wc_get_price_decimals() );
+
+            if ( $existing_cost && $existing_cost !== '' && $existing_cost !== '0' ) {
+                if ( (float) $existing_cost !== (float) $formatted_cost ) {
+                    update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                    $updated++;
+                } else {
+                    $skipped++;
+                }
+            } else {
+                update_post_meta( $product_id, self::PRODUCT_COST_META, $formatted_cost );
+                $imported++;
+            }
+        }
+
+        $processed = $offset + count( $products );
+        $is_complete = ( $processed >= $total || empty( $products ) );
+
+        // Recalculate inventory on last batch
+        if ( $is_complete ) {
+            $this->recalculate_inventory_totals();
+            delete_transient( 'spvs_cog_import_total' );
+        }
+
+        wp_send_json_success( array(
+            'processed' => $processed,
+            'total' => $total,
+            'imported' => $imported,
+            'updated' => $updated,
+            'skipped' => $skipped,
+            'complete' => $is_complete,
+            'percentage' => $total > 0 ? round( ( $processed / $total ) * 100 ) : 100
+        ) );
+    }
+
     /** ---------------- Column helpers for CSV/Preview ---------------- */
     private function spvs_get_available_columns() {
         $cols = array(
@@ -1533,15 +1723,28 @@ final class SPVS_Cost_Profit {
             echo '<li>' . esc_html__( 'Recalculates inventory totals after import', 'spvs-cost-profit' ) . '</li>';
             echo '</ul>';
 
-            $import_url = add_query_arg( array(
-                'action'   => 'spvs_import_from_cog',
-                '_wpnonce' => wp_create_nonce( 'spvs_import_from_cog' ),
-            ), admin_url( 'admin-post.php' ) );
-
-            echo '<form method="post" action="' . esc_url( $import_url ) . '" style="margin-top:10px;" onsubmit="return confirm(\'' . esc_js( __( 'Import cost data from WooCommerce Cost of Goods? A backup will be created first.', 'spvs-cost-profit' ) ) . '\');">';
-            echo '<button type="submit" class="button button-primary" style="background:#00a32a; border-color:#00a32a;">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
+            echo '<div style="margin-top:10px;">';
+            echo '<button type="button" id="spvs-start-cog-import" class="button button-primary" style="background:#00a32a; border-color:#00a32a;">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
             echo ' <span style="color:#666; font-size:12px;">' . sprintf( esc_html__( '(%d products will be processed)', 'spvs-cost-profit' ), $cog_data['count'] ) . '</span>';
-            echo '</form>';
+            echo '</div>';
+
+            // Progress Modal
+            echo '<div id="spvs-import-modal">';
+            echo '<div id="spvs-import-modal-content">';
+            echo '<h2>📦 ' . esc_html__( 'Importing Cost of Goods Data', 'spvs-cost-profit' ) . '</h2>';
+            echo '<div id="spvs-progress-bar-container">';
+            echo '<div id="spvs-progress-bar">0%</div>';
+            echo '</div>';
+            echo '<div id="spvs-progress-status">' . esc_html__( 'Initializing...', 'spvs-cost-profit' ) . '</div>';
+            echo '<div id="spvs-progress-details">';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Imported:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-imported">0</span></div>';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Updated:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-updated">0</span></div>';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Skipped:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-skipped">0</span></div>';
+            echo '<div><span class="spvs-progress-label">' . esc_html__( 'Processed:', 'spvs-cost-profit' ) . '</span><span id="spvs-detail-processed">0 / 0</span></div>';
+            echo '</div>';
+            echo '<button id="spvs-import-complete-btn" class="button button-primary button-large">' . esc_html__( 'Close & Reload Page', 'spvs-cost-profit' ) . '</button>';
+            echo '</div>';
+            echo '</div>';
 
             echo '</div>';
         }
