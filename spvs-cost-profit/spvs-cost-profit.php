@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.2
+ * Version: 1.9.3
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -361,10 +361,15 @@ final class SPVS_Cost_Profit {
                 if ( $product->managing_stock() ) $managed++;
                 if ( $qty > 0 ) $qty_gt0++;
 
+                // Skip if no quantity
                 if ( $qty <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
 
                 $unit_cost = (float) $this->get_product_cost( $pid );
                 $reg_price = (float) $product->get_regular_price();
+
+                // Skip if cost or price is 0
+                if ( $unit_cost <= 0 || $reg_price <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
+
                 $line_cost   = $unit_cost * $qty;
                 $line_retail = $reg_price * $qty;
 
@@ -723,18 +728,18 @@ final class SPVS_Cost_Profit {
                         "SELECT
                             DATE_FORMAT(o.date_created_gmt, '$date_format') as period,
                             COUNT(DISTINCT o.id) as order_count,
-                            SUM(CAST(om.meta_value AS DECIMAL(10,2))) as total_profit,
+                            COALESCE(SUM(CAST(om.meta_value AS DECIMAL(10,2))), 0) as total_profit,
                             SUM(o.total_amount) as total_revenue
                         FROM {$orders_table} o
                         LEFT JOIN {$orders_meta_table} om ON o.id = om.order_id AND om.meta_key = %s
                         WHERE o.status IN ($status_list)
-                        AND o.date_created_gmt >= %s
-                        AND o.date_created_gmt <= %s
+                        AND DATE(o.date_created_gmt) >= %s
+                        AND DATE(o.date_created_gmt) <= %s
                         GROUP BY period
                         ORDER BY period ASC",
                         self::ORDER_TOTAL_PROFIT_META,
-                        $start_date . ' 00:00:00',
-                        $end_date . ' 23:59:59'
+                        $start_date,
+                        $end_date
                     );
 
                     $results = $wpdb->get_results( $query );
@@ -756,20 +761,20 @@ final class SPVS_Cost_Profit {
             "SELECT
                 DATE_FORMAT(p.post_date, '$date_format') as period,
                 COUNT(DISTINCT p.ID) as order_count,
-                SUM(CAST(pm.meta_value AS DECIMAL(10,2))) as total_profit,
+                COALESCE(SUM(CAST(pm.meta_value AS DECIMAL(10,2))), 0) as total_profit,
                 SUM(CAST(pm2.meta_value AS DECIMAL(10,2))) as total_revenue
             FROM {$wpdb->posts} p
             LEFT JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = %s
             LEFT JOIN {$wpdb->postmeta} pm2 ON p.ID = pm2.post_id AND pm2.meta_key = '_order_total'
             WHERE p.post_type = 'shop_order'
             AND p.post_status IN ($status_list)
-            AND p.post_date >= %s
-            AND p.post_date <= %s
+            AND DATE(p.post_date) >= %s
+            AND DATE(p.post_date) <= %s
             GROUP BY period
             ORDER BY period ASC",
             self::ORDER_TOTAL_PROFIT_META,
-            $start_date . ' 00:00:00',
-            $end_date . ' 23:59:59'
+            $start_date,
+            $end_date
         );
 
         $results = $wpdb->get_results( $query );
