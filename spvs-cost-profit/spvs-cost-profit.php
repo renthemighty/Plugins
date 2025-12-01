@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.8.5
+ * Version: 1.8.6
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -94,8 +94,8 @@ final class SPVS_Cost_Profit {
         /** Monthly profit report export */
         add_action( 'admin_post_spvs_export_monthly_profit', array( $this, 'export_monthly_profit_csv' ) );
 
-        /** COG Import */
-        add_action( 'wp_ajax_spvs_cog_import_batch', array( $this, 'ajax_cog_import_batch' ) );
+        /** COG Import (server-side, no AJAX) */
+        add_action( 'admin_post_spvs_import_cog', array( $this, 'import_cog_costs' ) );
 
         /** Daily cron for inventory totals */
         add_action( 'init', array( $this, 'maybe_schedule_daily_cron' ) );
@@ -113,14 +113,6 @@ final class SPVS_Cost_Profit {
         if ( 'woocommerce_page_spvs-inventory' === $hook || 'woocommerce_page_spvs-profit-reports' === $hook ) {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
-        }
-
-        if ( 'woocommerce_page_spvs-inventory' === $hook ) {
-            wp_enqueue_script( 'spvs-cog-import', plugin_dir_url( __FILE__ ) . 'js/cog-import.js', array( 'jquery' ), '1.0', true );
-            wp_localize_script( 'spvs-cog-import', 'spvsCogImport', array(
-                'ajaxurl' => admin_url( 'admin-ajax.php' ),
-                'nonce' => wp_create_nonce( 'spvs_cog_import' )
-            ) );
         }
     }
 
@@ -396,34 +388,18 @@ final class SPVS_Cost_Profit {
         ), false );
     }
 
-    /** ---------------- COG Import ---------------- */
-    public function ajax_cog_import_batch() {
-        check_ajax_referer( 'spvs_cog_import', 'nonce' );
-
-        if ( ! current_user_can( 'manage_woocommerce' ) ) {
-            wp_send_json_error( array( 'message' => 'Insufficient permissions' ) );
-        }
+    /** ---------------- COG Import (Server-side, no AJAX) ---------------- */
+    public function import_cog_costs() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_import_cog' );
 
         global $wpdb;
 
-        $offset = isset( $_POST['offset'] ) ? intval( $_POST['offset'] ) : 0;
-        $batch_size = 50;
-        $overwrite = isset( $_POST['overwrite'] ) && $_POST['overwrite'] === '1';
-        $delete_after = isset( $_POST['delete_after'] ) && $_POST['delete_after'] === '1';
+        $overwrite = isset( $_POST['spvs_cog_overwrite'] ) && $_POST['spvs_cog_overwrite'] === '1';
+        $delete_after = isset( $_POST['spvs_cog_delete_after'] ) && $_POST['spvs_cog_delete_after'] === '1';
 
-        // Get total count
-        $total = $wpdb->get_var( "
-            SELECT COUNT(DISTINCT pm.post_id)
-            FROM {$wpdb->postmeta} pm
-            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-            WHERE pm.meta_key = '_wc_cog_cost'
-            AND pm.meta_value != ''
-            AND pm.meta_value != '0'
-            AND p.post_type IN ('product', 'product_variation')
-        " );
-
-        // Get batch of product IDs with COG data
-        $product_ids = $wpdb->get_col( $wpdb->prepare( "
+        // Get all product IDs with COG data
+        $product_ids = $wpdb->get_col( "
             SELECT DISTINCT pm.post_id
             FROM {$wpdb->postmeta} pm
             INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
@@ -432,8 +408,7 @@ final class SPVS_Cost_Profit {
             AND pm.meta_value != '0'
             AND p.post_type IN ('product', 'product_variation')
             ORDER BY pm.post_id ASC
-            LIMIT %d OFFSET %d
-        ", $batch_size, $offset ) );
+        " );
 
         $imported = 0;
         $updated = 0;
@@ -459,20 +434,16 @@ final class SPVS_Cost_Profit {
             if ( $delete_after ) {
                 delete_post_meta( $product_id, '_wc_cog_cost' );
             }
+
+            // Small delay every 100 products to avoid timeout
+            if ( ( $imported + $updated + $skipped ) % 100 === 0 ) {
+                usleep( 100000 );
+            }
         }
 
-        $processed = $offset + count( $product_ids );
-        $percentage = $total > 0 ? min( 100, round( ( $processed / $total ) * 100 ) ) : 100;
-
-        wp_send_json_success( array(
-            'imported' => $imported,
-            'updated' => $updated,
-            'skipped' => $skipped,
-            'processed' => $processed,
-            'total' => $total,
-            'percentage' => $percentage,
-            'complete' => $processed >= $total
-        ) );
+        $msg = sprintf( 'cog_import_done:%d:%d:%d', $imported, $updated, $skipped );
+        wp_safe_redirect( add_query_arg( array( 'page' => 'spvs-inventory', 'spvs_msg' => rawurlencode( $msg ) ), admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     /** ---------------- CSV Import helpers ---------------- */
@@ -1074,31 +1045,19 @@ final class SPVS_Cost_Profit {
         echo '<p>' . esc_html__( 'Items processed:', 'spvs-cost-profit' ) . ' ' . esc_html( $count ) . ' · ' . esc_html__( 'Managing stock:', 'spvs-cost-profit' ) . ' ' . esc_html( $managed ) . ' · ' . esc_html__( 'Qty > 0:', 'spvs-cost-profit' ) . ' ' . esc_html( $qty_gt0 ) . '</p>';
         echo '<p style="margin-top:6px; opacity:.8;">' . esc_html__( 'Note: If a variation has no cost set, it will use the parent product cost automatically.', 'spvs-cost-profit' ) . '</p>';
 
-        // COG Import Section
+        // COG Import Section (Simple form, no AJAX)
         echo '<hr style="margin:18px 0;"><h2>' . esc_html__( 'Import from Cost of Goods Plugin', 'spvs-cost-profit' ) . '</h2>';
-        echo '<div class="card" style="max-width: 800px; padding: 30px; margin: 20px 0;">';
+        echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" onsubmit="return confirm(\'Import costs from Cost of Goods plugin? This may take a moment.\');" style="display:flex; flex-wrap:wrap; gap:12px; align-items:flex-end;">';
+        echo '<input type="hidden" name="action" value="spvs_import_cog" />';
+        wp_nonce_field( 'spvs_import_cog' );
+        echo '<div class="card" style="width: 100%; padding: 20px; margin: 10px 0;">';
         echo '<p>Found <strong>' . esc_html( $cog_count ) . '</strong> products with Cost of Goods data.</p>';
-        echo '<p><label><input type="checkbox" id="spvs-cog-overwrite"> ' . esc_html__( 'Overwrite existing cost values', 'spvs-cost-profit' ) . '</label></p>';
-        echo '<p><label><input type="checkbox" id="spvs-cog-delete-after"> ' . esc_html__( 'Delete Cost of Goods data after import', 'spvs-cost-profit' ) . '</label></p>';
-        echo '<button id="spvs-start-cog-import" class="button button-primary" style="margin-top: 15px;">📥 ' . esc_html__( 'Start Import', 'spvs-cost-profit' ) . '</button>';
+        echo '<p><label><input type="checkbox" name="spvs_cog_overwrite" value="1"> ' . esc_html__( 'Overwrite existing cost values', 'spvs-cost-profit' ) . '</label></p>';
+        echo '<p><label><input type="checkbox" name="spvs_cog_delete_after" value="1"> ' . esc_html__( 'Delete Cost of Goods data after import', 'spvs-cost-profit' ) . '</label></p>';
+        echo '<button type="submit" class="button button-primary">📥 ' . esc_html__( 'Import from Cost of Goods', 'spvs-cost-profit' ) . '</button>';
+        echo '<p class="description" style="margin-top: 10px;">' . esc_html__( 'This will import all cost data from the WooCommerce Cost of Goods plugin. No AJAX - direct server processing.', 'spvs-cost-profit' ) . '</p>';
         echo '</div>';
-
-        // Import Modal
-        echo '<div id="spvs-import-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 999999; justify-content: center; align-items: center;">';
-        echo '<div style="background: white; padding: 40px; border-radius: 8px; max-width: 500px; width: 90%;">';
-        echo '<h2 style="margin-top: 0;">⏳ ' . esc_html__( 'Importing...', 'spvs-cost-profit' ) . '</h2>';
-        echo '<div style="background: #f0f0f0; height: 30px; border-radius: 4px; overflow: hidden; margin: 20px 0;">';
-        echo '<div id="spvs-progress-bar" style="background: #2271b1; height: 100%; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">0%</div>';
-        echo '</div>';
-        echo '<p id="spvs-progress-status">' . esc_html__( 'Preparing...', 'spvs-cost-profit' ) . '</p>';
-        echo '<div style="margin-top: 20px; padding: 15px; background: #f9f9f9; border-radius: 4px;">';
-        echo '<div><strong>' . esc_html__( 'Imported:', 'spvs-cost-profit' ) . '</strong> <span id="spvs-detail-imported">0</span></div>';
-        echo '<div><strong>' . esc_html__( 'Updated:', 'spvs-cost-profit' ) . '</strong> <span id="spvs-detail-updated">0</span></div>';
-        echo '<div><strong>' . esc_html__( 'Skipped:', 'spvs-cost-profit' ) . '</strong> <span id="spvs-detail-skipped">0</span></div>';
-        echo '<div><strong>' . esc_html__( 'Processed:', 'spvs-cost-profit' ) . '</strong> <span id="spvs-detail-processed">0</span></div>';
-        echo '</div>';
-        echo '<button id="spvs-import-complete-btn" class="button button-primary" style="margin-top: 20px; display: none;">' . esc_html__( 'Done', 'spvs-cost-profit' ) . '</button>';
-        echo '</div></div>';
+        echo '</form>';
 
         echo '<form method="get" style="margin:12px 0; display:flex; align-items:flex-end; gap:12px; flex-wrap:wrap;">';
         echo '<input type="hidden" name="page" value="spvs-inventory" />';
