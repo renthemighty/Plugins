@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.10
+ * Version: 1.5.11
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -502,23 +502,52 @@ final class SPVS_Cost_Profit {
 
                 // Get cost and price - use get_price() for actual selling price (handles sale prices)
                 $unit_cost = (float) $this->get_product_cost( $pid );
-                $sell_price = (float) $product->get_price();
+                $sell_price = $product->get_price();
 
-                // Fallback 1: Try regular price if get_price() returns 0
-                if ( $sell_price <= 0 ) {
-                    $sell_price = (float) $product->get_regular_price();
+                // Handle empty string vs 0
+                if ( empty( $sell_price ) && $sell_price !== '0' ) {
+                    $sell_price = 0;
+                } else {
+                    $sell_price = (float) $sell_price;
                 }
 
-                // Fallback 2: For variations without a price, try to get parent price
+                // Fallback 1: Try regular price if get_price() returns 0 or empty
+                if ( $sell_price <= 0 ) {
+                    $regular = $product->get_regular_price();
+                    if ( ! empty( $regular ) || $regular === '0' ) {
+                        $sell_price = (float) $regular;
+                    }
+                }
+
+                // Fallback 2: For variations, try direct meta access
+                if ( $sell_price <= 0 && $product->is_type( 'variation' ) ) {
+                    $direct_price = get_post_meta( $pid, '_price', true );
+                    if ( ! empty( $direct_price ) && $direct_price !== '0' ) {
+                        $sell_price = (float) $direct_price;
+                    } else {
+                        $direct_regular = get_post_meta( $pid, '_regular_price', true );
+                        if ( ! empty( $direct_regular ) && $direct_regular !== '0' ) {
+                            $sell_price = (float) $direct_regular;
+                        }
+                    }
+                }
+
+                // Fallback 3: For variations without a price, try parent price
                 if ( $sell_price <= 0 && $product->is_type( 'variation' ) ) {
                     $parent_id = $product->get_parent_id();
                     if ( $parent_id ) {
                         $parent_product = wc_get_product( $parent_id );
                         if ( $parent_product ) {
-                            // Try parent's active price first, then regular price
-                            $sell_price = (float) $parent_product->get_price();
-                            if ( $sell_price <= 0 ) {
-                                $sell_price = (float) $parent_product->get_regular_price();
+                            // Try parent's regular price (base price for variations)
+                            $parent_regular = $parent_product->get_regular_price();
+                            if ( ! empty( $parent_regular ) || $parent_regular === '0' ) {
+                                $sell_price = (float) $parent_regular;
+                            } else {
+                                // Last resort: parent's active price
+                                $parent_price = $parent_product->get_price();
+                                if ( ! empty( $parent_price ) || $parent_price === '0' ) {
+                                    $sell_price = (float) $parent_price;
+                                }
                             }
                         }
                     }
