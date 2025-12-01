@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.7-debug
+ * Version: 1.9.8-debug
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -962,11 +962,21 @@ final class SPVS_Cost_Profit {
         $debug_info['hpos_enabled'] = $hpos_exists ? 'Yes' : 'No';
 
         if ( $hpos_exists ) {
-            // CRITICAL: Check what statuses actually exist in the database
+            // Get total order count in entire database
+            $total_all_orders = $wpdb->get_var( "SELECT COUNT(*) FROM {$orders_table}" );
+            $debug_info['total_all_orders'] = $total_all_orders;
+
+            // CRITICAL: Check what statuses actually exist (ALL orders, not filtered)
             $actual_statuses = $wpdb->get_results(
-                "SELECT DISTINCT status, COUNT(*) as count FROM {$orders_table} GROUP BY status ORDER BY count DESC LIMIT 10"
+                "SELECT DISTINCT status, COUNT(*) as count FROM {$orders_table} GROUP BY status ORDER BY count DESC LIMIT 15"
             );
             $debug_info['actual_statuses_in_db'] = $actual_statuses;
+
+            // Get sample recent orders to check dates
+            $sample_dates = $wpdb->get_results(
+                "SELECT id, status, date_created_gmt, DATE(date_created_gmt) as date_only FROM {$orders_table} ORDER BY date_created_gmt DESC LIMIT 5"
+            );
+            $debug_info['sample_recent_orders'] = $sample_dates;
 
             $order_statuses = apply_filters( 'spvs_profit_report_order_statuses', array( 'wc-completed', 'wc-processing' ) );
             $hpos_statuses = array_map( function( $status ) { return str_replace( 'wc-', '', $status ); }, $order_statuses );
@@ -1032,9 +1042,13 @@ final class SPVS_Cost_Profit {
             // Show debug information
             echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border-left: 4px solid #ff8c00;">';
             echo '<h3 style="margin-top: 0;">🔍 Debug Information</h3>';
-            echo '<table class="widefat striped" style="max-width: 600px;"><tbody>';
-            echo '<tr><td><strong>Date Range:</strong></td><td>' . esc_html( $start_date ) . ' to ' . esc_html( $end_date ) . '</td></tr>';
+            echo '<table class="widefat striped" style="max-width: 800px;"><tbody>';
+            echo '<tr><td style="width: 250px;"><strong>Date Range:</strong></td><td>' . esc_html( $start_date ) . ' to ' . esc_html( $end_date ) . '</td></tr>';
             echo '<tr><td><strong>HPOS Enabled:</strong></td><td>' . esc_html( $debug_info['hpos_enabled'] ) . '</td></tr>';
+
+            if ( isset( $debug_info['total_all_orders'] ) ) {
+                echo '<tr style="background: #e6f7ff;"><td><strong>📊 Total Orders in DB:</strong></td><td><strong>' . esc_html( $debug_info['total_all_orders'] ) . '</strong></td></tr>';
+            }
 
             if ( isset( $debug_info['searching_statuses'] ) ) {
                 echo '<tr><td><strong>Searching Order Statuses:</strong></td><td>' . esc_html( $debug_info['searching_statuses'] ) . '</td></tr>';
@@ -1046,9 +1060,17 @@ final class SPVS_Cost_Profit {
                 if ( isset( $debug_info['actual_statuses_in_db'] ) && ! empty( $debug_info['actual_statuses_in_db'] ) ) {
                     $status_list = array();
                     foreach ( $debug_info['actual_statuses_in_db'] as $st ) {
-                        $status_list[] = esc_html( $st->status ) . ' (' . esc_html( $st->count ) . ')';
+                        $status_list[] = '<strong>' . esc_html( $st->status ) . '</strong> (' . esc_html( $st->count ) . ')';
                     }
                     echo '<tr style="background: #ffffcc;"><td><strong>⚠️ Actual Statuses in DB:</strong></td><td>' . implode( ', ', $status_list ) . '</td></tr>';
+                }
+
+                // Show sample recent orders
+                if ( isset( $debug_info['sample_recent_orders'] ) && ! empty( $debug_info['sample_recent_orders'] ) ) {
+                    echo '<tr style="background: #f0f0f0;"><td colspan="2"><strong>📅 5 Most Recent Orders:</strong></td></tr>';
+                    foreach ( $debug_info['sample_recent_orders'] as $sample ) {
+                        echo '<tr style="background: #fafafa; font-size: 11px;"><td style="padding-left: 20px;">Order #' . esc_html( $sample->id ) . '</td><td>Status: <strong>' . esc_html( $sample->status ) . '</strong>, Date: ' . esc_html( $sample->date_only ) . ' (' . esc_html( $sample->date_created_gmt ) . ')</td></tr>';
+                    }
                 }
             }
 
