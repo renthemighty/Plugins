@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and a dedicated admin page.
- * Version: 1.5.6
+ * Version: 1.5.7
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -1100,6 +1100,8 @@ final class SPVS_Cost_Profit {
             $this->recalculate_inventory_totals();
             delete_transient( 'spvs_cog_import_total' );
             delete_transient( 'spvs_cog_import_options' );
+            // Mark import as completed
+            update_option( 'spvs_cog_import_completed', time(), false );
         }
 
         wp_send_json_success( array(
@@ -1884,8 +1886,22 @@ final class SPVS_Cost_Profit {
 
         // Cost of Goods Import Section
         $cog_data = $this->detect_cost_of_goods_data();
+        $import_completed = get_option( 'spvs_cog_import_completed', false );
+        $show_import_ui = isset( $_GET['spvs_show_cog_import'] ) || ! $import_completed;
+
         if ( $cog_data['found'] ) {
-            echo '<hr style="margin:18px 0;"><h2>📦 ' . esc_html__( 'Import from WooCommerce Cost of Goods', 'spvs-cost-profit' ) . ' <span style="font-size:14px; color:#00a32a; font-weight:normal;">(NEW in v1.4.8)</span></h2>';
+            echo '<hr style="margin:18px 0;">';
+
+            // If import was completed, show compact version
+            if ( $import_completed && ! $show_import_ui ) {
+                echo '<div style="background:#fff; border:1px solid #ddd; padding:15px; margin:15px 0; border-radius:5px;">';
+                echo '<h3 style="margin:0 0 10px 0;">📦 ' . esc_html__( 'Cost of Goods Import', 'spvs-cost-profit' ) . '</h3>';
+                echo '<p style="margin:0 0 10px 0; color:#666;">' . esc_html__( 'Import completed. Need to import again?', 'spvs-cost-profit' ) . '</p>';
+                echo '<a href="' . esc_url( add_query_arg( 'spvs_show_cog_import', '1' ) ) . '" class="button">' . esc_html__( '🔄 Re-import from Cost of Goods', 'spvs-cost-profit' ) . '</a>';
+                echo '</div>';
+            } else {
+                // Show full import UI
+                echo '<h2>📦 ' . esc_html__( 'Import from WooCommerce Cost of Goods', 'spvs-cost-profit' ) . '</h2>';
 
             echo '<div style="background:#e7f7e7; padding:15px; border-radius:5px; border-left:4px solid #00a32a; margin:15px 0;">';
             echo '<p style="margin:0 0 10px 0;"><strong>✅ ' . esc_html__( 'Cost of Goods Data Detected!', 'spvs-cost-profit' ) . '</strong></p>';
@@ -1959,6 +1975,7 @@ final class SPVS_Cost_Profit {
             echo '</div>';
 
             echo '</div>';
+            } // End else (show full import UI)
         }
 
         // Data Backup & Restore Section
