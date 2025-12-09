@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.1.0
+ * Version: 2.1.1
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -35,6 +35,7 @@ class WC_Free_Gift_Simple {
         add_action('admin_init', [$this, 'register_setting']);
         add_action('admin_enqueue_scripts', [$this, 'admin_scripts']);
         add_action('wp_ajax_wc_free_gift_load_variations', [$this, 'ajax_load_variations']);
+        add_action('wp_ajax_wc_free_gift_search_products', [$this, 'ajax_search_products']);
 
         // Cart functionality - simple and direct
         add_action('template_redirect', [$this, 'check_and_add_gift'], 99);
@@ -84,14 +85,79 @@ class WC_Free_Gift_Simple {
             $available_variations = $product->get_available_variations();
             foreach ($available_variations as $variation) {
                 $variation_obj = wc_get_product($variation['variation_id']);
+                $sku = $variation_obj->get_sku();
+                $name = $variation_obj->get_name();
+
+                // Format: Name (SKU: xxx) or just Name if no SKU
+                $display_name = $name;
+                if ($sku) {
+                    $display_name = $name . ' (SKU: ' . $sku . ')';
+                }
+
                 $variations[] = [
                     'id' => $variation['variation_id'],
-                    'name' => $variation_obj->get_name()
+                    'name' => $display_name
                 ];
             }
         }
 
         wp_send_json_success($variations);
+    }
+
+    public function ajax_search_products() {
+        check_ajax_referer('search-products', 'security');
+
+        $term = sanitize_text_field($_GET['term'] ?? '');
+        $results = [];
+
+        if (strlen($term) < 1) {
+            wp_send_json($results);
+        }
+
+        // Search products by name or SKU
+        $args = [
+            'post_type' => 'product',
+            'posts_per_page' => 50,
+            's' => $term,
+            'post_status' => 'publish'
+        ];
+
+        // Also search by SKU
+        $sku_query = new WP_Query([
+            'post_type' => 'product',
+            'posts_per_page' => 50,
+            'post_status' => 'publish',
+            'meta_query' => [
+                [
+                    'key' => '_sku',
+                    'value' => $term,
+                    'compare' => 'LIKE'
+                ]
+            ]
+        ]);
+
+        $query = new WP_Query($args);
+        $product_ids = array_merge($query->posts, $sku_query->posts);
+        $product_ids = array_unique(array_map(function($post) { return $post->ID; }, $product_ids));
+
+        foreach ($product_ids as $product_id) {
+            $product = wc_get_product($product_id);
+            if ($product) {
+                $sku = $product->get_sku();
+                $name = $product->get_name();
+
+                // Format: Name (SKU: xxx) (ID: xxx)
+                $display_name = $name;
+                if ($sku) {
+                    $display_name = $name . ' (SKU: ' . $sku . ')';
+                }
+                $display_name .= ' (ID: ' . $product_id . ')';
+
+                $results[$product_id] = $display_name;
+            }
+        }
+
+        wp_send_json($results);
     }
 
     public function settings_page() {
@@ -154,24 +220,37 @@ class WC_Free_Gift_Simple {
                                         <?php
                                         $product = wc_get_product($rule['product_id']);
                                         $product_name = $product ? $product->get_name() : '';
+                                        $product_sku = $product ? $product->get_sku() : '';
+                                        $product_display = $product_name;
+                                        if ($product_sku) {
+                                            $product_display = $product_name . ' (SKU: ' . $product_sku . ')';
+                                        }
+                                        $product_display .= ' (ID: ' . $rule['product_id'] . ')';
+
                                         $variation_name = '';
+                                        $variation_display = '';
                                         if ($rule['variation_id'] > 0) {
                                             $variation = wc_get_product($rule['variation_id']);
                                             $variation_name = $variation ? $variation->get_name() : '';
+                                            $variation_sku = $variation ? $variation->get_sku() : '';
+                                            $variation_display = $variation_name;
+                                            if ($variation_sku) {
+                                                $variation_display = $variation_name . ' (SKU: ' . $variation_sku . ')';
+                                            }
                                         }
                                         ?>
                                         <div class="gift-rule-row" style="margin-bottom:15px;padding:15px;border:1px solid #ddd;background:#f9f9f9;">
                                             <div style="margin-bottom:10px;">
                                                 <label style="display:inline-block;width:120px;font-weight:bold;">Product:</label>
                                                 <select name="gift_rules[<?php echo $index; ?>][product_id]" class="gift-product-select" style="width:300px;">
-                                                    <option value="<?php echo $rule['product_id']; ?>" selected><?php echo esc_html($product_name); ?> (ID: <?php echo $rule['product_id']; ?>)</option>
+                                                    <option value="<?php echo $rule['product_id']; ?>" selected><?php echo esc_html($product_display); ?></option>
                                                 </select>
                                             </div>
                                             <div style="margin-bottom:10px;" class="variation-field" <?php echo $rule['variation_id'] > 0 ? '' : 'style="display:none;"'; ?>>
                                                 <label style="display:inline-block;width:120px;font-weight:bold;">Variation:</label>
                                                 <select name="gift_rules[<?php echo $index; ?>][variation_id]" class="gift-variation-select" style="width:300px;">
                                                     <?php if ($rule['variation_id'] > 0): ?>
-                                                        <option value="<?php echo $rule['variation_id']; ?>" selected><?php echo esc_html($variation_name); ?></option>
+                                                        <option value="<?php echo $rule['variation_id']; ?>" selected><?php echo esc_html($variation_display); ?></option>
                                                     <?php else: ?>
                                                         <option value="0">-- No Variation --</option>
                                                     <?php endif; ?>
@@ -215,7 +294,7 @@ class WC_Free_Gift_Simple {
                                     data: function(params) {
                                         return {
                                             term: params.term,
-                                            action: 'woocommerce_json_search_products',
+                                            action: 'wc_free_gift_search_products',
                                             security: '<?php echo wp_create_nonce('search-products'); ?>'
                                         };
                                     },
