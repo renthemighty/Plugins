@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -29,7 +29,7 @@ define('WC_FREE_GIFT_LOADED', true);
 
 // Define plugin constants
 if (!defined('WC_FREE_GIFT_VERSION')) {
-    define('WC_FREE_GIFT_VERSION', '1.0.5');
+    define('WC_FREE_GIFT_VERSION', '1.0.6');
 }
 if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
     define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -83,8 +83,9 @@ if (!class_exists('WC_Free_Gift')) {
                 return;
             }
 
-            // Add free gift to cart - Use late priority to run after other plugins
-            add_action('woocommerce_before_calculate_totals', array($this, 'add_free_gift_to_cart'), 999, 1);
+            // Add free gift to cart - multiple hooks for reliability
+            add_action('woocommerce_before_calculate_totals', array($this, 'add_free_gift_to_cart'), 10, 1);
+            add_action('woocommerce_cart_loaded_from_session', array($this, 'add_free_gift_to_cart'), 10, 1);
 
             // Ensure free gift stays free even after discount plugins
             add_filter('woocommerce_cart_item_price', array($this, 'ensure_free_gift_price'), 999, 3);
@@ -250,47 +251,61 @@ if (!class_exists('WC_Free_Gift')) {
             }
             $running = true;
 
+            // Make sure we have a cart object
+            if (!$cart || !is_object($cart)) {
+                if (function_exists('WC') && WC()->cart) {
+                    $cart = WC()->cart;
+                } else {
+                    $running = false;
+                    return;
+                }
+            }
+
             // Get the free gift product ID
             $free_gift_id = get_option('wc_free_gift_product_id', 0);
 
             // If no product is selected, do nothing
-            if ($free_gift_id <= 0) {
+            if (empty($free_gift_id) || $free_gift_id <= 0) {
                 $running = false;
                 return;
             }
 
-            // Verify product exists and is purchasable
+            // Verify product exists
             $product = wc_get_product($free_gift_id);
-            if (!$product || !$product->is_purchasable() || !$product->is_in_stock()) {
+            if (!$product) {
                 $running = false;
                 return;
             }
 
             // Check if the free gift is already in the cart
             $free_gift_in_cart = false;
+            $has_regular_items = false;
+
             foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
+                // Check if this is our free gift
                 if ($cart_item['product_id'] == $free_gift_id) {
                     $free_gift_in_cart = true;
                     // Set price to 0
                     $cart_item['data']->set_price(0);
                     // Mark it as a free gift
                     $cart->cart_contents[$cart_item_key]['free_gift'] = true;
+                } else {
+                    // This is a regular item
+                    $has_regular_items = true;
                 }
             }
 
-            // If free gift is not in cart and cart is not empty, add it
-            if (!$free_gift_in_cart && !$cart->is_empty()) {
-                // Count non-free-gift items
-                $regular_items = 0;
-                foreach ($cart->get_cart() as $cart_item) {
-                    if (!isset($cart_item['free_gift']) || !$cart_item['free_gift']) {
-                        $regular_items++;
-                    }
-                }
+            // If free gift is not in cart and there are regular items, add it
+            if (!$free_gift_in_cart && $has_regular_items) {
+                WC()->cart->add_to_cart($free_gift_id, 1, 0, array(), array('free_gift' => true));
+            }
 
-                // Only add if there are regular items in cart
-                if ($regular_items > 0) {
-                    $cart->add_to_cart($free_gift_id, 1, 0, array(), array('free_gift' => true));
+            // If there are no regular items and free gift is in cart, remove it
+            if (!$has_regular_items && $free_gift_in_cart) {
+                foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
+                    if ($cart_item['product_id'] == $free_gift_id && isset($cart_item['free_gift'])) {
+                        $cart->remove_cart_item($cart_item_key);
+                    }
                 }
             }
 
