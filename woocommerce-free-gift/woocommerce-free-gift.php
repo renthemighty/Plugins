@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.2
+ * Version: 1.0.3
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -29,7 +29,7 @@ define('WC_FREE_GIFT_LOADED', true);
 
 // Define plugin constants
 if (!defined('WC_FREE_GIFT_VERSION')) {
-    define('WC_FREE_GIFT_VERSION', '1.0.2');
+    define('WC_FREE_GIFT_VERSION', '1.0.3');
 }
 if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
     define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -72,16 +72,16 @@ if (!class_exists('WC_Free_Gift')) {
          * Initialize the plugin
          */
         public function init() {
+            // Load admin functionality (always show menu)
+            if (is_admin()) {
+                add_action('admin_menu', array($this, 'add_admin_menu'));
+                add_action('admin_init', array($this, 'register_settings'));
+            }
+
             // Check if WooCommerce is active
             if (!class_exists('WooCommerce')) {
                 add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
                 return;
-            }
-
-            // Load admin functionality
-            if (is_admin()) {
-                add_action('admin_menu', array($this, 'add_admin_menu'));
-                add_action('admin_init', array($this, 'register_settings'));
             }
 
             // Add free gift to cart - Use late priority to run after other plugins
@@ -110,7 +110,7 @@ if (!class_exists('WC_Free_Gift')) {
             add_menu_page(
                 __('Free Gift Settings', 'wc-free-gift'),
                 __('Free Gift', 'wc-free-gift'),
-                'manage_woocommerce',
+                'manage_options',
                 'wc-free-gift',
                 array($this, 'render_admin_page'),
                 'dashicons-gift',
@@ -134,7 +134,7 @@ if (!class_exists('WC_Free_Gift')) {
          */
         public function render_admin_page() {
             // Check user capabilities
-            if (!current_user_can('manage_woocommerce')) {
+            if (!current_user_can('manage_options')) {
                 return;
             }
 
