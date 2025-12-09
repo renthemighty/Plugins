@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -38,6 +38,7 @@ class WC_Free_Gift_Simple {
         // Cart functionality - simple and direct
         add_action('template_redirect', [$this, 'check_and_add_gift'], 99);
         add_action('woocommerce_add_to_cart', [$this, 'on_add_to_cart'], 10);
+        add_action('woocommerce_cart_item_removed', [$this, 'on_cart_item_removed'], 10);
         add_filter('woocommerce_add_to_cart_validation', [$this, 'prevent_gift_manual_add'], 10, 2);
         add_filter('woocommerce_cart_item_remove_link', [$this, 'remove_gift_remove_link'], 10, 2);
         add_filter('woocommerce_cart_item_name', [$this, 'add_gift_badge'], 10, 3);
@@ -153,6 +154,31 @@ class WC_Free_Gift_Simple {
 
     public function on_add_to_cart() {
         $this->check_and_add_gift();
+    }
+
+    public function on_cart_item_removed() {
+        if (!function_exists('WC') || !WC()->cart) return;
+
+        $cart = WC()->cart;
+        $gift_id = absint(get_option('wc_free_gift_product_id', 0));
+        if ($gift_id <= 0) return;
+
+        // Check if there are any regular (non-gift) items
+        $has_regular_items = false;
+        $gift_key = null;
+
+        foreach ($cart->get_cart() as $key => $item) {
+            if ($item['product_id'] == $gift_id && isset($item['free_gift'])) {
+                $gift_key = $key;
+            } else {
+                $has_regular_items = true;
+            }
+        }
+
+        // If no regular items and gift is in cart, remove it
+        if (!$has_regular_items && $gift_key) {
+            $cart->remove_cart_item($gift_key);
+        }
     }
 
     public function prevent_gift_manual_add($valid, $product_id) {
