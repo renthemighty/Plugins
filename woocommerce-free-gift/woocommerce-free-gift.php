@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.7
+ * Version: 1.0.8
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -29,7 +29,7 @@ define('WC_FREE_GIFT_LOADED', true);
 
 // Define plugin constants
 if (!defined('WC_FREE_GIFT_VERSION')) {
-    define('WC_FREE_GIFT_VERSION', '1.0.7');
+    define('WC_FREE_GIFT_VERSION', '1.0.8');
 }
 if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
     define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -98,6 +98,10 @@ if (!class_exists('WC_Free_Gift')) {
 
             // Add free gift message
             add_filter('woocommerce_cart_item_name', array($this, 'add_free_gift_label'), 10, 3);
+
+            // Persist free gift cart data
+            add_filter('woocommerce_add_cart_item_data', array($this, 'add_free_gift_cart_item_data'), 10, 3);
+            add_filter('woocommerce_get_cart_item_from_session', array($this, 'get_free_gift_from_session'), 10, 2);
         }
 
         /**
@@ -336,33 +340,49 @@ if (!class_exists('WC_Free_Gift')) {
             // Check if the free gift is already in the cart
             $free_gift_in_cart = false;
             $has_regular_items = false;
+            $free_gift_key = null;
 
             foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
                 // Check if this is our free gift
                 if ($cart_item['product_id'] == $free_gift_id) {
                     $free_gift_in_cart = true;
+                    $free_gift_key = $cart_item_key;
                     // Set price to 0
                     $cart_item['data']->set_price(0);
                     // Mark it as a free gift
                     $cart->cart_contents[$cart_item_key]['free_gift'] = true;
                 } else {
-                    // This is a regular item
-                    $has_regular_items = true;
+                    // This is a regular item (not the free gift)
+                    if (!isset($cart_item['free_gift']) || !$cart_item['free_gift']) {
+                        $has_regular_items = true;
+                    }
                 }
             }
 
             // If free gift is not in cart and there are regular items, add it
             if (!$free_gift_in_cart && $has_regular_items) {
-                WC()->cart->add_to_cart($free_gift_id, 1, 0, array(), array('free_gift' => true));
+                // Add the free gift to cart
+                $added = $cart->add_to_cart(
+                    $free_gift_id,  // product_id
+                    1,              // quantity
+                    0,              // variation_id
+                    array(),        // variation
+                    array('free_gift' => true)  // cart_item_data
+                );
+
+                // If successfully added, set price to 0
+                if ($added) {
+                    foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
+                        if ($cart_item_key === $added && isset($cart_item['free_gift'])) {
+                            $cart_item['data']->set_price(0);
+                        }
+                    }
+                }
             }
 
             // If there are no regular items and free gift is in cart, remove it
-            if (!$has_regular_items && $free_gift_in_cart) {
-                foreach ($cart->get_cart() as $cart_item_key => $cart_item) {
-                    if ($cart_item['product_id'] == $free_gift_id && isset($cart_item['free_gift'])) {
-                        $cart->remove_cart_item($cart_item_key);
-                    }
-                }
+            if (!$has_regular_items && $free_gift_in_cart && $free_gift_key) {
+                $cart->remove_cart_item($free_gift_key);
             }
 
             $running = false;
@@ -399,6 +419,29 @@ if (!class_exists('WC_Free_Gift')) {
                 $name .= ' <span style="background: #4CAF50; color: white; padding: 2px 8px; border-radius: 3px; font-size: 11px; font-weight: bold; margin-left: 8px;">' . __('FREE GIFT', 'wc-free-gift') . '</span>';
             }
             return $name;
+        }
+
+        /**
+         * Add free gift data when adding to cart
+         */
+        public function add_free_gift_cart_item_data($cart_item_data, $product_id, $variation_id) {
+            $free_gift_id = get_option('wc_free_gift_product_id', 0);
+            if ($product_id == $free_gift_id && isset($cart_item_data['free_gift'])) {
+                $cart_item_data['free_gift'] = true;
+                $cart_item_data['unique_key'] = md5(microtime().rand());
+            }
+            return $cart_item_data;
+        }
+
+        /**
+         * Get free gift data from session
+         */
+        public function get_free_gift_from_session($cart_item, $values) {
+            if (isset($values['free_gift']) && $values['free_gift']) {
+                $cart_item['free_gift'] = true;
+                $cart_item['data']->set_price(0);
+            }
+            return $cart_item;
         }
     }
 }
