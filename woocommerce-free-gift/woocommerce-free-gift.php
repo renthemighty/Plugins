@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.0.3
+ * Version: 2.0.4
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -46,6 +46,8 @@ class WC_Free_Gift_Simple {
         add_action('woocommerce_before_calculate_totals', [$this, 'set_gift_price'], 999);
         add_action('woocommerce_after_cart_item_quantity_update', [$this, 'enforce_gift_quantity'], 10, 2);
         add_filter('woocommerce_update_cart_validation', [$this, 'validate_cart_update'], 10, 4);
+        add_filter('woocommerce_cart_item_class', [$this, 'add_gift_cart_class'], 10, 2);
+        add_action('wp_head', [$this, 'add_gift_styles']);
     }
 
     public function admin_menu() {
@@ -210,9 +212,9 @@ class WC_Free_Gift_Simple {
     }
 
     public function set_gift_quantity($quantity, $cart_item_key, $cart_item) {
-        // Make free gift quantity non-editable (display as text)
+        // Make free gift quantity non-editable (display as plain text)
         if (isset($cart_item['free_gift'])) {
-            return $quantity; // Shows as plain text, not editable
+            return sprintf('<span class="gift-quantity">%s</span>', $cart_item['quantity']);
         }
         return $quantity;
     }
@@ -242,6 +244,20 @@ class WC_Free_Gift_Simple {
                 $item['data']->set_price(0);
             }
         }
+    }
+
+    public function add_gift_cart_class($class, $cart_item) {
+        if (isset($cart_item['free_gift'])) {
+            $class .= ' free-gift-item';
+        }
+        return $class;
+    }
+
+    public function add_gift_styles() {
+        echo '<style>
+            .free-gift-item .quantity input { display: none !important; }
+            .free-gift-item .quantity { pointer-events: none !important; }
+        </style>';
     }
 }
 
