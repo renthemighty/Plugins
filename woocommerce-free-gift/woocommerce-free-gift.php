@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.0.2
+ * Version: 2.0.3
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -45,6 +45,7 @@ class WC_Free_Gift_Simple {
         add_filter('woocommerce_cart_item_quantity', [$this, 'set_gift_quantity'], 10, 3);
         add_action('woocommerce_before_calculate_totals', [$this, 'set_gift_price'], 999);
         add_action('woocommerce_after_cart_item_quantity_update', [$this, 'enforce_gift_quantity'], 10, 2);
+        add_filter('woocommerce_update_cart_validation', [$this, 'validate_cart_update'], 10, 4);
     }
 
     public function admin_menu() {
@@ -184,8 +185,12 @@ class WC_Free_Gift_Simple {
     }
 
     public function prevent_gift_manual_add($valid, $product_id) {
-        // Allow customers to purchase the gift product normally
-        // The free gift is separate and marked with 'free_gift' flag
+        // Prevent manual addition of the gift product
+        $gift_id = absint(get_option('wc_free_gift_product_id', 0));
+        if ($gift_id > 0 && $product_id == $gift_id) {
+            wc_add_notice('This product is automatically added as a free gift and cannot be purchased separately.', 'error');
+            return false;
+        }
         return $valid;
     }
 
@@ -220,6 +225,15 @@ class WC_Free_Gift_Simple {
             // Force free gift quantity to always be 1
             WC()->cart->cart_contents[$cart_item_key]['quantity'] = 1;
         }
+    }
+
+    public function validate_cart_update($passed, $cart_item_key, $values, $quantity) {
+        // Prevent quantity updates for free gift items
+        if (isset($values['free_gift']) && $quantity != 1) {
+            wc_add_notice('The free gift quantity cannot be changed.', 'error');
+            return false;
+        }
+        return $passed;
     }
 
     public function set_gift_price($cart) {
