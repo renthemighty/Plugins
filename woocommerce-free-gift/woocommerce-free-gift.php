@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.1.2
+ * Version: 2.1.3
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -45,7 +45,15 @@ class WC_Free_Gift_Simple {
         add_filter('woocommerce_cart_item_remove_link', [$this, 'remove_gift_remove_link'], 10, 2);
         add_filter('woocommerce_cart_item_name', [$this, 'add_gift_badge'], 10, 3);
         add_filter('woocommerce_cart_item_quantity', [$this, 'set_gift_quantity'], 10, 3);
-        add_action('woocommerce_before_calculate_totals', [$this, 'set_gift_price'], 999);
+
+        // Multiple hooks to ensure price is ALWAYS $0
+        add_action('woocommerce_before_calculate_totals', [$this, 'set_gift_price'], 9999);
+        add_action('woocommerce_cart_loaded_from_session', [$this, 'set_gift_price'], 9999);
+        add_filter('woocommerce_cart_item_price', [$this, 'display_gift_price'], 9999, 3);
+        add_filter('woocommerce_cart_item_subtotal', [$this, 'display_gift_price'], 9999, 3);
+        add_action('woocommerce_checkout_create_order_line_item', [$this, 'save_gift_meta_to_order'], 10, 4);
+        add_filter('woocommerce_order_item_get_total', [$this, 'enforce_zero_price_order'], 10, 2);
+
         add_action('woocommerce_after_cart_item_quantity_update', [$this, 'enforce_gift_quantity'], 10, 2);
         add_filter('woocommerce_update_cart_validation', [$this, 'validate_cart_update'], 10, 4);
         add_filter('woocommerce_cart_item_class', [$this, 'add_gift_cart_class'], 10, 2);
@@ -649,11 +657,53 @@ class WC_Free_Gift_Simple {
     }
 
     public function set_gift_price($cart) {
+        if (!$cart) return;
+
         foreach ($cart->get_cart() as $key => $item) {
             if (isset($item['free_gift'])) {
+                // Set price to 0 - multiple times for certainty
                 $item['data']->set_price(0);
+                $item['data']->set_regular_price(0);
+                $item['data']->set_sale_price(0);
+
+                $this->log_debug('Setting free gift price to $0 for cart item: ' . $key);
+
+                // Verify it was set
+                if ($item['data']->get_price() != 0) {
+                    $this->log_debug('WARNING: Price not zero after setting! Current price: $' . $item['data']->get_price());
+                }
             }
         }
+    }
+
+    public function display_gift_price($price, $cart_item, $cart_item_key = null) {
+        if (isset($cart_item['free_gift'])) {
+            $this->log_debug('Displaying free gift price as $0 for cart item');
+            return wc_price(0);
+        }
+        return $price;
+    }
+
+    public function save_gift_meta_to_order($item, $cart_item_key, $values, $order) {
+        // Save free_gift flag to order item meta
+        if (isset($values['free_gift'])) {
+            $item->add_meta_data('free_gift', true, true);
+            $item->set_total(0);
+            $item->set_subtotal(0);
+            $this->log_debug('Saved free_gift meta to order item and set price to $0');
+        }
+    }
+
+    public function enforce_zero_price_order($total, $item) {
+        // For order items (after checkout)
+        if ($item && is_object($item) && method_exists($item, 'get_meta')) {
+            $is_free_gift = $item->get_meta('free_gift', true);
+            if ($is_free_gift) {
+                $this->log_debug('Enforcing $0 price on order item');
+                return 0;
+            }
+        }
+        return $total;
     }
 
     public function add_gift_cart_class($class, $cart_item) {
