@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.0.1
+ * Version: 2.0.2
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -42,7 +42,9 @@ class WC_Free_Gift_Simple {
         add_filter('woocommerce_add_to_cart_validation', [$this, 'prevent_gift_manual_add'], 10, 2);
         add_filter('woocommerce_cart_item_remove_link', [$this, 'remove_gift_remove_link'], 10, 2);
         add_filter('woocommerce_cart_item_name', [$this, 'add_gift_badge'], 10, 3);
+        add_filter('woocommerce_cart_item_quantity', [$this, 'set_gift_quantity'], 10, 3);
         add_action('woocommerce_before_calculate_totals', [$this, 'set_gift_price'], 999);
+        add_action('woocommerce_after_cart_item_quantity_update', [$this, 'enforce_gift_quantity'], 10, 2);
     }
 
     public function admin_menu() {
@@ -182,11 +184,8 @@ class WC_Free_Gift_Simple {
     }
 
     public function prevent_gift_manual_add($valid, $product_id) {
-        $gift_id = absint(get_option('wc_free_gift_product_id', 0));
-        if ($product_id == $gift_id && !isset($_REQUEST['free_gift'])) {
-            wc_add_notice('This product is automatically added as a free gift', 'error');
-            return false;
-        }
+        // Allow customers to purchase the gift product normally
+        // The free gift is separate and marked with 'free_gift' flag
         return $valid;
     }
 
@@ -203,6 +202,24 @@ class WC_Free_Gift_Simple {
             $name .= ' <span style="background:#4CAF50;color:white;padding:3px 8px;border-radius:3px;font-size:11px;margin-left:8px;">FREE GIFT</span>';
         }
         return $name;
+    }
+
+    public function set_gift_quantity($quantity, $cart_item_key, $cart_item) {
+        // Make free gift quantity non-editable (display as text)
+        if (isset($cart_item['free_gift'])) {
+            return $quantity; // Shows as plain text, not editable
+        }
+        return $quantity;
+    }
+
+    public function enforce_gift_quantity($cart_item_key, $quantity) {
+        if (!function_exists('WC') || !WC()->cart) return;
+
+        $cart = WC()->cart->get_cart();
+        if (isset($cart[$cart_item_key]['free_gift'])) {
+            // Force free gift quantity to always be 1
+            WC()->cart->cart_contents[$cart_item_key]['quantity'] = 1;
+        }
     }
 
     public function set_gift_price($cart) {
