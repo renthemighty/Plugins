@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.6
+ * Version: 1.0.7
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -29,7 +29,7 @@ define('WC_FREE_GIFT_LOADED', true);
 
 // Define plugin constants
 if (!defined('WC_FREE_GIFT_VERSION')) {
-    define('WC_FREE_GIFT_VERSION', '1.0.6');
+    define('WC_FREE_GIFT_VERSION', '1.0.7');
 }
 if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
     define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -68,6 +68,7 @@ if (!class_exists('WC_Free_Gift')) {
             // Always add admin menu
             add_action('admin_menu', array($this, 'add_admin_menu'));
             add_action('admin_init', array($this, 'register_settings'));
+            add_action('admin_enqueue_scripts', array($this, 'enqueue_admin_scripts'));
 
             // Initialize functionality on plugins_loaded
             add_action('plugins_loaded', array($this, 'init'));
@@ -83,7 +84,8 @@ if (!class_exists('WC_Free_Gift')) {
                 return;
             }
 
-            // Add free gift to cart - multiple hooks for reliability
+            // Add free gift to cart - multiple hooks for maximum reliability
+            add_action('wp_loaded', array($this, 'maybe_add_free_gift'));
             add_action('woocommerce_before_calculate_totals', array($this, 'add_free_gift_to_cart'), 10, 1);
             add_action('woocommerce_cart_loaded_from_session', array($this, 'add_free_gift_to_cart'), 10, 1);
 
@@ -96,6 +98,27 @@ if (!class_exists('WC_Free_Gift')) {
 
             // Add free gift message
             add_filter('woocommerce_cart_item_name', array($this, 'add_free_gift_label'), 10, 3);
+        }
+
+        /**
+         * Enqueue admin scripts
+         */
+        public function enqueue_admin_scripts($hook) {
+            if ('toplevel_page_wc-free-gift' !== $hook) {
+                return;
+            }
+            wp_enqueue_script('selectWoo');
+            wp_enqueue_style('woocommerce_admin_styles');
+        }
+
+        /**
+         * Maybe add free gift on wp_loaded
+         */
+        public function maybe_add_free_gift() {
+            if (!function_exists('WC') || !WC()->cart) {
+                return;
+            }
+            $this->add_free_gift_to_cart(WC()->cart);
         }
 
         /**
@@ -155,22 +178,21 @@ if (!class_exists('WC_Free_Gift')) {
                 echo '<div class="notice notice-success is-dismissible"><p>' . __('Settings saved successfully!', 'wc-free-gift') . '</p></div>';
             }
 
-            // Get all products for dropdown
-            $args = array(
-                'post_type' => 'product',
-                'posts_per_page' => -1,
-                'post_status' => 'publish',
-                'orderby' => 'title',
-                'order' => 'ASC'
-            );
-            $products = get_posts($args);
+            // Get current product for display
+            $current_product_name = '';
+            if ($current_product_id > 0) {
+                $current_product = wc_get_product($current_product_id);
+                if ($current_product) {
+                    $current_product_name = $current_product->get_name();
+                }
+            }
             ?>
             <div class="wrap">
                 <h1><?php echo esc_html(get_admin_page_title()); ?></h1>
 
                 <div style="background: #fff; padding: 20px; margin-top: 20px; border: 1px solid #ccd0d4; box-shadow: 0 1px 1px rgba(0,0,0,.04);">
                     <h2><?php _e('Configure Your Free Gift', 'wc-free-gift'); ?></h2>
-                    <p><?php _e('Select the product that will be automatically added as a free gift to every order.', 'wc-free-gift'); ?></p>
+                    <p><?php _e('Search and select the product that will be automatically added as a free gift to every order.', 'wc-free-gift'); ?></p>
 
                     <form method="post" action="">
                         <?php wp_nonce_field('wc_free_gift_save', 'wc_free_gift_nonce'); ?>
@@ -182,16 +204,17 @@ if (!class_exists('WC_Free_Gift')) {
                                         <label for="wc_free_gift_product_id"><?php _e('Free Gift Product', 'wc-free-gift'); ?></label>
                                     </th>
                                     <td>
-                                        <select name="wc_free_gift_product_id" id="wc_free_gift_product_id" class="regular-text">
-                                            <option value="0"><?php _e('-- Select a Product --', 'wc-free-gift'); ?></option>
-                                            <?php foreach ($products as $product): ?>
-                                                <option value="<?php echo esc_attr($product->ID); ?>" <?php selected($current_product_id, $product->ID); ?>>
-                                                    <?php echo esc_html($product->post_title); ?> (ID: <?php echo $product->ID; ?>)
+                                        <select name="wc_free_gift_product_id" id="wc_free_gift_product_id" class="wc-product-search" style="width: 50%;" data-placeholder="<?php esc_attr_e('Search for a product&hellip;', 'wc-free-gift'); ?>" data-allow_clear="true">
+                                            <?php if ($current_product_id > 0 && !empty($current_product_name)): ?>
+                                                <option value="<?php echo esc_attr($current_product_id); ?>" selected="selected">
+                                                    <?php echo esc_html($current_product_name); ?> (ID: <?php echo $current_product_id; ?>)
                                                 </option>
-                                            <?php endforeach; ?>
+                                            <?php else: ?>
+                                                <option value="0"><?php _e('-- Select a Product --', 'wc-free-gift'); ?></option>
+                                            <?php endif; ?>
                                         </select>
                                         <p class="description">
-                                            <?php _e('This product will be added to every cart automatically at no charge.', 'wc-free-gift'); ?>
+                                            <?php _e('Type to search for products. This product will be added to every cart automatically at no charge.', 'wc-free-gift'); ?>
                                         </p>
                                     </td>
                                 </tr>
@@ -200,6 +223,39 @@ if (!class_exists('WC_Free_Gift')) {
 
                         <?php submit_button(__('Save Settings', 'wc-free-gift')); ?>
                     </form>
+
+                    <script type="text/javascript">
+                        jQuery(document).ready(function($) {
+                            $('#wc_free_gift_product_id').selectWoo({
+                                ajax: {
+                                    url: ajaxurl,
+                                    dataType: 'json',
+                                    delay: 250,
+                                    data: function(params) {
+                                        return {
+                                            term: params.term,
+                                            action: 'woocommerce_json_search_products',
+                                            security: '<?php echo wp_create_nonce('search-products'); ?>'
+                                        };
+                                    },
+                                    processResults: function(data) {
+                                        var results = [];
+                                        $.each(data, function(id, text) {
+                                            results.push({
+                                                id: id,
+                                                text: text
+                                            });
+                                        });
+                                        return {
+                                            results: results
+                                        };
+                                    },
+                                    cache: true
+                                },
+                                minimumInputLength: 1
+                            });
+                        });
+                    </script>
 
                     <?php if ($current_product_id > 0):
                         $product = wc_get_product($current_product_id);
