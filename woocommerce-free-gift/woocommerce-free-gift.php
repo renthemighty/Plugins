@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.0.5
+ * Version: 2.0.6
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -101,13 +101,25 @@ class WC_Free_Gift_Simple {
 
         if (isset($_POST['wc_free_gift_nonce'])) {
             check_admin_referer('wc_free_gift_save', 'wc_free_gift_nonce');
-            $product_id = absint($_POST['wc_free_gift_product_id'] ?? 0);
-            $variation_id = absint($_POST['wc_free_gift_variation_id'] ?? 0);
-            update_option('wc_free_gift_product_id', $product_id);
-            update_option('wc_free_gift_variation_id', $variation_id);
-            echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
+
+            // Handle clear button
+            if (isset($_POST['clear_selection'])) {
+                update_option('wc_free_gift_product_id', 0);
+                update_option('wc_free_gift_variation_id', 0);
+                $product_id = 0;
+                echo '<div class="notice notice-success"><p>Product selection cleared!</p></div>';
+            } else {
+                $enabled = isset($_POST['wc_free_gift_enabled']) ? 1 : 0;
+                $product_id = absint($_POST['wc_free_gift_product_id'] ?? 0);
+                $variation_id = absint($_POST['wc_free_gift_variation_id'] ?? 0);
+                update_option('wc_free_gift_enabled', $enabled);
+                update_option('wc_free_gift_product_id', $product_id);
+                update_option('wc_free_gift_variation_id', $variation_id);
+                echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
+            }
         }
 
+        $enabled = get_option('wc_free_gift_enabled', 1);
         $variation_id = absint(get_option('wc_free_gift_variation_id', 0));
         $product_name = '';
         $variation_name = '';
@@ -126,6 +138,16 @@ class WC_Free_Gift_Simple {
                 <?php wp_nonce_field('wc_free_gift_save', 'wc_free_gift_nonce'); ?>
                 <table class="form-table">
                     <tr>
+                        <th>Enable Free Gift</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="wc_free_gift_enabled" value="1" <?php checked($enabled, 1); ?>>
+                                Enable automatic free gift
+                            </label>
+                            <p class="description">Turn the free gift feature on or off</p>
+                        </td>
+                    </tr>
+                    <tr>
                         <th>Select Free Gift Product</th>
                         <td>
                             <select name="wc_free_gift_product_id" id="wc_free_gift_product_id" style="width:400px">
@@ -135,6 +157,9 @@ class WC_Free_Gift_Simple {
                                     <option value="0">-- Select Product --</option>
                                 <?php endif; ?>
                             </select>
+                            <?php if ($product_id > 0): ?>
+                                <button type="submit" name="clear_selection" class="button" style="margin-left:10px;">Clear Selection</button>
+                            <?php endif; ?>
                             <p class="description">Search and select a product to add as free gift</p>
                         </td>
                     </tr>
@@ -206,6 +231,10 @@ class WC_Free_Gift_Simple {
     public function check_and_add_gift() {
         if (!function_exists('WC') || !WC()->cart) return;
         if (is_admin()) return;
+
+        // Check if feature is enabled
+        $enabled = get_option('wc_free_gift_enabled', 1);
+        if (!$enabled) return;
 
         $cart = WC()->cart;
         if ($cart->is_empty()) return;
