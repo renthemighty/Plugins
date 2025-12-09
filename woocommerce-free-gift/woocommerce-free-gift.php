@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.8
+ * Version: 1.0.9
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -29,7 +29,7 @@ define('WC_FREE_GIFT_LOADED', true);
 
 // Define plugin constants
 if (!defined('WC_FREE_GIFT_VERSION')) {
-    define('WC_FREE_GIFT_VERSION', '1.0.8');
+    define('WC_FREE_GIFT_VERSION', '1.0.9');
 }
 if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
     define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -324,6 +324,11 @@ if (!class_exists('WC_Free_Gift')) {
             // Get the free gift product ID
             $free_gift_id = get_option('wc_free_gift_product_id', 0);
 
+            // Debug output
+            if (current_user_can('manage_options')) {
+                echo '<!-- DEBUG: Free Gift ID=' . $free_gift_id . ' -->';
+            }
+
             // If no product is selected, do nothing
             if (empty($free_gift_id) || $free_gift_id <= 0) {
                 $running = false;
@@ -333,6 +338,9 @@ if (!class_exists('WC_Free_Gift')) {
             // Verify product exists
             $product = wc_get_product($free_gift_id);
             if (!$product) {
+                if (current_user_can('manage_options')) {
+                    echo '<!-- DEBUG: Product not found -->';
+                }
                 $running = false;
                 return;
             }
@@ -359,6 +367,10 @@ if (!class_exists('WC_Free_Gift')) {
                 }
             }
 
+            if (current_user_can('manage_options')) {
+                echo '<!-- DEBUG: In cart=' . ($free_gift_in_cart ? 'yes' : 'no') . ' Has regular=' . ($has_regular_items ? 'yes' : 'no') . ' -->';
+            }
+
             // If free gift is not in cart and there are regular items, add it
             if (!$free_gift_in_cart && $has_regular_items) {
                 // Add the free gift to cart
@@ -369,6 +381,10 @@ if (!class_exists('WC_Free_Gift')) {
                     array(),        // variation
                     array('free_gift' => true)  // cart_item_data
                 );
+
+                if (current_user_can('manage_options')) {
+                    echo '<!-- DEBUG: Add result=' . ($added ? $added : 'FAILED') . ' -->';
+                }
 
                 // If successfully added, set price to 0
                 if ($added) {
