@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.0.6
+ * Version: 2.1.0
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -97,44 +97,42 @@ class WC_Free_Gift_Simple {
     public function settings_page() {
         if (!current_user_can('manage_options')) return;
 
-        $product_id = get_option('wc_free_gift_product_id', 0);
-
         if (isset($_POST['wc_free_gift_nonce'])) {
             check_admin_referer('wc_free_gift_save', 'wc_free_gift_nonce');
 
-            // Handle clear button
-            if (isset($_POST['clear_selection'])) {
-                update_option('wc_free_gift_product_id', 0);
-                update_option('wc_free_gift_variation_id', 0);
-                $product_id = 0;
-                echo '<div class="notice notice-success"><p>Product selection cleared!</p></div>';
-            } else {
-                $enabled = isset($_POST['wc_free_gift_enabled']) ? 1 : 0;
-                $product_id = absint($_POST['wc_free_gift_product_id'] ?? 0);
-                $variation_id = absint($_POST['wc_free_gift_variation_id'] ?? 0);
-                update_option('wc_free_gift_enabled', $enabled);
-                update_option('wc_free_gift_product_id', $product_id);
-                update_option('wc_free_gift_variation_id', $variation_id);
-                echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
+            $enabled = isset($_POST['wc_free_gift_enabled']) ? 1 : 0;
+            update_option('wc_free_gift_enabled', $enabled);
+
+            // Save country-based rules
+            $rules = [];
+            if (isset($_POST['gift_rules']) && is_array($_POST['gift_rules'])) {
+                foreach ($_POST['gift_rules'] as $rule) {
+                    $product_id = absint($rule['product_id'] ?? 0);
+                    $variation_id = absint($rule['variation_id'] ?? 0);
+                    $country = sanitize_text_field($rule['country'] ?? '');
+
+                    if ($product_id > 0 && $country) {
+                        $rules[] = [
+                            'product_id' => $product_id,
+                            'variation_id' => $variation_id,
+                            'country' => $country
+                        ];
+                    }
+                }
             }
+            update_option('wc_free_gift_rules', $rules);
+            echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
 
         $enabled = get_option('wc_free_gift_enabled', 1);
-        $variation_id = absint(get_option('wc_free_gift_variation_id', 0));
-        $product_name = '';
-        $variation_name = '';
-        if ($product_id > 0) {
-            $product = wc_get_product($product_id);
-            if ($product) $product_name = $product->get_name();
-        }
-        if ($variation_id > 0) {
-            $variation = wc_get_product($variation_id);
-            if ($variation) $variation_name = $variation->get_name();
-        }
+        $rules = get_option('wc_free_gift_rules', []);
+
+        // Get WooCommerce countries
+        $countries = WC()->countries->get_countries();
         ?>
         <div class="wrap">
             <h1>Free Gift Settings</h1>
-            <form method="post">
+            <form method="post" id="wc-free-gift-form">
                 <?php wp_nonce_field('wc_free_gift_save', 'wc_free_gift_nonce'); ?>
                 <table class="form-table">
                     <tr>
@@ -148,32 +146,52 @@ class WC_Free_Gift_Simple {
                         </td>
                     </tr>
                     <tr>
-                        <th>Select Free Gift Product</th>
+                        <th>Free Gift Rules</th>
                         <td>
-                            <select name="wc_free_gift_product_id" id="wc_free_gift_product_id" style="width:400px">
-                                <?php if ($product_id > 0 && $product_name): ?>
-                                    <option value="<?php echo $product_id; ?>" selected><?php echo esc_html($product_name); ?> (ID: <?php echo $product_id; ?>)</option>
-                                <?php else: ?>
-                                    <option value="0">-- Select Product --</option>
+                            <div id="gift-rules-container">
+                                <?php if (!empty($rules)): ?>
+                                    <?php foreach ($rules as $index => $rule): ?>
+                                        <?php
+                                        $product = wc_get_product($rule['product_id']);
+                                        $product_name = $product ? $product->get_name() : '';
+                                        $variation_name = '';
+                                        if ($rule['variation_id'] > 0) {
+                                            $variation = wc_get_product($rule['variation_id']);
+                                            $variation_name = $variation ? $variation->get_name() : '';
+                                        }
+                                        ?>
+                                        <div class="gift-rule-row" style="margin-bottom:15px;padding:15px;border:1px solid #ddd;background:#f9f9f9;">
+                                            <div style="margin-bottom:10px;">
+                                                <label style="display:inline-block;width:120px;font-weight:bold;">Product:</label>
+                                                <select name="gift_rules[<?php echo $index; ?>][product_id]" class="gift-product-select" style="width:300px;">
+                                                    <option value="<?php echo $rule['product_id']; ?>" selected><?php echo esc_html($product_name); ?> (ID: <?php echo $rule['product_id']; ?>)</option>
+                                                </select>
+                                            </div>
+                                            <div style="margin-bottom:10px;" class="variation-field" <?php echo $rule['variation_id'] > 0 ? '' : 'style="display:none;"'; ?>>
+                                                <label style="display:inline-block;width:120px;font-weight:bold;">Variation:</label>
+                                                <select name="gift_rules[<?php echo $index; ?>][variation_id]" class="gift-variation-select" style="width:300px;">
+                                                    <?php if ($rule['variation_id'] > 0): ?>
+                                                        <option value="<?php echo $rule['variation_id']; ?>" selected><?php echo esc_html($variation_name); ?></option>
+                                                    <?php else: ?>
+                                                        <option value="0">-- No Variation --</option>
+                                                    <?php endif; ?>
+                                                </select>
+                                            </div>
+                                            <div style="margin-bottom:10px;">
+                                                <label style="display:inline-block;width:120px;font-weight:bold;">Country:</label>
+                                                <select name="gift_rules[<?php echo $index; ?>][country]" class="gift-country-select" style="width:300px;">
+                                                    <?php foreach ($countries as $code => $name): ?>
+                                                        <option value="<?php echo esc_attr($code); ?>" <?php selected($rule['country'], $code); ?>><?php echo esc_html($name); ?></option>
+                                                    <?php endforeach; ?>
+                                                </select>
+                                            </div>
+                                            <button type="button" class="button remove-rule" style="color:#a00;">Remove</button>
+                                        </div>
+                                    <?php endforeach; ?>
                                 <?php endif; ?>
-                            </select>
-                            <?php if ($product_id > 0): ?>
-                                <button type="submit" name="clear_selection" class="button" style="margin-left:10px;">Clear Selection</button>
-                            <?php endif; ?>
-                            <p class="description">Search and select a product to add as free gift</p>
-                        </td>
-                    </tr>
-                    <tr id="variation_row" style="<?php echo ($product_id > 0) ? '' : 'display:none;'; ?>">
-                        <th>Select Variation (Optional)</th>
-                        <td>
-                            <select name="wc_free_gift_variation_id" id="wc_free_gift_variation_id" style="width:400px">
-                                <?php if ($variation_id > 0 && $variation_name): ?>
-                                    <option value="<?php echo $variation_id; ?>" selected><?php echo esc_html($variation_name); ?> (ID: <?php echo $variation_id; ?>)</option>
-                                <?php else: ?>
-                                    <option value="0">-- Select Variation --</option>
-                                <?php endif; ?>
-                            </select>
-                            <p class="description">If the product has variations, select one here</p>
+                            </div>
+                            <button type="button" id="add-rule" class="button button-secondary">+ Add Free Gift Rule</button>
+                            <p class="description">Add different free gifts for different countries</p>
                         </td>
                     </tr>
                 </table>
@@ -181,47 +199,104 @@ class WC_Free_Gift_Simple {
             </form>
             <script>
             jQuery(function($) {
-                $('#wc_free_gift_product_id').selectWoo({
-                    ajax: {
-                        url: ajaxurl,
-                        dataType: 'json',
-                        data: function(params) {
-                            return {
-                                term: params.term,
-                                action: 'woocommerce_json_search_products',
-                                security: '<?php echo wp_create_nonce('search-products'); ?>'
-                            };
-                        },
-                        processResults: function(data) {
-                            return { results: Object.keys(data).map(id => ({id: id, text: data[id]})) };
-                        }
-                    },
-                    minimumInputLength: 1
-                }).on('change', function() {
-                    var productId = $(this).val();
-                    if (productId > 0) {
-                        loadVariations(productId);
-                        $('#variation_row').show();
-                    } else {
-                        $('#variation_row').hide();
-                    }
-                });
+                var ruleIndex = <?php echo count($rules); ?>;
+                var countries = <?php echo json_encode($countries); ?>;
 
-                function loadVariations(productId) {
+                // Initialize existing select2 fields
+                initializeSelect2();
+
+                function initializeSelect2() {
+                    $('.gift-product-select').each(function() {
+                        if (!$(this).hasClass('select2-hidden-accessible')) {
+                            $(this).selectWoo({
+                                ajax: {
+                                    url: ajaxurl,
+                                    dataType: 'json',
+                                    data: function(params) {
+                                        return {
+                                            term: params.term,
+                                            action: 'woocommerce_json_search_products',
+                                            security: '<?php echo wp_create_nonce('search-products'); ?>'
+                                        };
+                                    },
+                                    processResults: function(data) {
+                                        return { results: Object.keys(data).map(id => ({id: id, text: data[id]})) };
+                                    }
+                                },
+                                minimumInputLength: 1
+                            }).on('change', function() {
+                                var $row = $(this).closest('.gift-rule-row');
+                                var productId = $(this).val();
+                                if (productId > 0) {
+                                    loadVariations(productId, $row);
+                                }
+                            });
+                        }
+                    });
+
+                    $('.gift-country-select').each(function() {
+                        if (!$(this).hasClass('select2-hidden-accessible')) {
+                            $(this).selectWoo();
+                        }
+                    });
+                }
+
+                function loadVariations(productId, $row) {
                     $.post(ajaxurl, {
                         action: 'wc_free_gift_load_variations',
                         product_id: productId,
                         security: '<?php echo wp_create_nonce('load-variations'); ?>'
                     }, function(response) {
                         if (response.success && response.data.length > 0) {
-                            var $select = $('#wc_free_gift_variation_id');
-                            $select.empty().append('<option value="0">-- Select Variation --</option>');
+                            var $variationField = $row.find('.variation-field');
+                            var $select = $row.find('.gift-variation-select');
+                            $variationField.show();
+                            $select.empty().append('<option value="0">-- No Variation --</option>');
                             $.each(response.data, function(i, variation) {
                                 $select.append('<option value="' + variation.id + '">' + variation.name + '</option>');
                             });
                         }
                     });
                 }
+
+                // Add new rule
+                $('#add-rule').on('click', function() {
+                    var countryOptions = '';
+                    $.each(countries, function(code, name) {
+                        countryOptions += '<option value="' + code + '">' + name + '</option>';
+                    });
+
+                    var html = '<div class="gift-rule-row" style="margin-bottom:15px;padding:15px;border:1px solid #ddd;background:#f9f9f9;">' +
+                        '<div style="margin-bottom:10px;">' +
+                            '<label style="display:inline-block;width:120px;font-weight:bold;">Product:</label>' +
+                            '<select name="gift_rules[' + ruleIndex + '][product_id]" class="gift-product-select" style="width:300px;">' +
+                                '<option value="0">-- Search for product --</option>' +
+                            '</select>' +
+                        '</div>' +
+                        '<div style="margin-bottom:10px;display:none;" class="variation-field">' +
+                            '<label style="display:inline-block;width:120px;font-weight:bold;">Variation:</label>' +
+                            '<select name="gift_rules[' + ruleIndex + '][variation_id]" class="gift-variation-select" style="width:300px;">' +
+                                '<option value="0">-- No Variation --</option>' +
+                            '</select>' +
+                        '</div>' +
+                        '<div style="margin-bottom:10px;">' +
+                            '<label style="display:inline-block;width:120px;font-weight:bold;">Country:</label>' +
+                            '<select name="gift_rules[' + ruleIndex + '][country]" class="gift-country-select" style="width:300px;">' +
+                                countryOptions +
+                            '</select>' +
+                        '</div>' +
+                        '<button type="button" class="button remove-rule" style="color:#a00;">Remove</button>' +
+                    '</div>';
+
+                    $('#gift-rules-container').append(html);
+                    ruleIndex++;
+                    initializeSelect2();
+                });
+
+                // Remove rule
+                $(document).on('click', '.remove-rule', function() {
+                    $(this).closest('.gift-rule-row').remove();
+                });
             });
             </script>
         </div>
@@ -239,8 +314,27 @@ class WC_Free_Gift_Simple {
         $cart = WC()->cart;
         if ($cart->is_empty()) return;
 
-        $gift_id = absint(get_option('wc_free_gift_product_id', 0));
-        $variation_id = absint(get_option('wc_free_gift_variation_id', 0));
+        // Get country-based rules
+        $rules = get_option('wc_free_gift_rules', []);
+        if (empty($rules)) return;
+
+        // Detect customer country
+        $customer_country = $this->get_customer_country();
+        if (!$customer_country) return;
+
+        // Find matching rule for this country
+        $matched_rule = null;
+        foreach ($rules as $rule) {
+            if ($rule['country'] === $customer_country) {
+                $matched_rule = $rule;
+                break;
+            }
+        }
+
+        if (!$matched_rule) return;
+
+        $gift_id = absint($matched_rule['product_id']);
+        $variation_id = absint($matched_rule['variation_id']);
         if ($gift_id <= 0) return;
 
         // Check if gift already in cart
@@ -272,6 +366,30 @@ class WC_Free_Gift_Simple {
         }
     }
 
+    private function get_customer_country() {
+        // Priority 1: Try WooCommerce customer billing country (if set)
+        if (WC()->customer && method_exists(WC()->customer, 'get_billing_country')) {
+            $country = WC()->customer->get_billing_country();
+            if ($country) return $country;
+        }
+
+        // Priority 2: Try WooCommerce customer shipping country (if set)
+        if (WC()->customer && method_exists(WC()->customer, 'get_shipping_country')) {
+            $country = WC()->customer->get_shipping_country();
+            if ($country) return $country;
+        }
+
+        // Priority 3: Try WooCommerce Geolocation (IP-based)
+        if (class_exists('WC_Geolocation')) {
+            $location = WC_Geolocation::geolocate_ip();
+            if (!empty($location['country'])) {
+                return $location['country'];
+            }
+        }
+
+        return false;
+    }
+
     public function on_add_to_cart() {
         $this->check_and_add_gift();
     }
@@ -280,24 +398,13 @@ class WC_Free_Gift_Simple {
         if (!function_exists('WC') || !WC()->cart) return;
 
         $cart = WC()->cart;
-        $gift_id = absint(get_option('wc_free_gift_product_id', 0));
-        $variation_id = absint(get_option('wc_free_gift_variation_id', 0));
-        if ($gift_id <= 0) return;
 
         // Check if there are any regular (non-gift) items
         $has_regular_items = false;
         $gift_key = null;
 
         foreach ($cart->get_cart() as $key => $item) {
-            // Check if this is the free gift
-            $is_free_gift = false;
-            if ($variation_id > 0) {
-                $is_free_gift = ($item['variation_id'] == $variation_id && isset($item['free_gift']));
-            } else {
-                $is_free_gift = ($item['product_id'] == $gift_id && isset($item['free_gift']));
-            }
-
-            if ($is_free_gift) {
+            if (isset($item['free_gift'])) {
                 $gift_key = $key;
             } else {
                 $has_regular_items = true;
@@ -311,11 +418,13 @@ class WC_Free_Gift_Simple {
     }
 
     public function prevent_gift_manual_add($valid, $product_id) {
-        // Prevent manual addition of the gift product
-        $gift_id = absint(get_option('wc_free_gift_product_id', 0));
-        if ($gift_id > 0 && $product_id == $gift_id) {
-            wc_add_notice('This product is automatically added as a free gift and cannot be purchased separately.', 'error');
-            return false;
+        // Prevent manual addition of any gift products
+        $rules = get_option('wc_free_gift_rules', []);
+        foreach ($rules as $rule) {
+            if ($rule['product_id'] == $product_id) {
+                wc_add_notice('This product is automatically added as a free gift and cannot be purchased separately.', 'error');
+                return false;
+            }
         }
         return $valid;
     }
