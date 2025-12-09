@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -20,11 +20,6 @@
 if (!defined('ABSPATH')) {
     exit;
 }
-
-// Define plugin constants
-define('WC_FREE_GIFT_VERSION', '1.0.0');
-define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
-define('WC_FREE_GIFT_PLUGIN_URL', plugin_dir_url(__FILE__));
 
 /**
  * Main WooCommerce Free Gift Class
@@ -50,8 +45,23 @@ class WC_Free_Gift {
      * Constructor
      */
     private function __construct() {
-        // Check if WooCommerce is active
+        $this->define_constants();
         add_action('plugins_loaded', array($this, 'init'));
+    }
+
+    /**
+     * Define plugin constants
+     */
+    private function define_constants() {
+        if (!defined('WC_FREE_GIFT_VERSION')) {
+            define('WC_FREE_GIFT_VERSION', '1.0.1');
+        }
+        if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
+            define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
+        }
+        if (!defined('WC_FREE_GIFT_PLUGIN_URL')) {
+            define('WC_FREE_GIFT_PLUGIN_URL', plugin_dir_url(__FILE__));
+        }
     }
 
     /**
@@ -272,7 +282,9 @@ class WC_Free_Gift {
     }
 }
 
-// Initialize the plugin
+/**
+ * Initialize the plugin
+ */
 function wc_free_gift_init() {
     return WC_Free_Gift::get_instance();
 }
