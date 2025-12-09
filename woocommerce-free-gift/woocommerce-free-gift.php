@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 1.0.3
+ * Version: 1.0.4
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -29,7 +29,7 @@ define('WC_FREE_GIFT_LOADED', true);
 
 // Define plugin constants
 if (!defined('WC_FREE_GIFT_VERSION')) {
-    define('WC_FREE_GIFT_VERSION', '1.0.3');
+    define('WC_FREE_GIFT_VERSION', '1.0.4');
 }
 if (!defined('WC_FREE_GIFT_PLUGIN_DIR')) {
     define('WC_FREE_GIFT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -65,6 +65,11 @@ if (!class_exists('WC_Free_Gift')) {
          * Constructor
          */
         private function __construct() {
+            // Always add admin menu
+            add_action('admin_menu', array($this, 'add_admin_menu'));
+            add_action('admin_init', array($this, 'register_settings'));
+
+            // Initialize functionality on plugins_loaded
             add_action('plugins_loaded', array($this, 'init'));
         }
 
@@ -72,12 +77,6 @@ if (!class_exists('WC_Free_Gift')) {
          * Initialize the plugin
          */
         public function init() {
-            // Load admin functionality (always show menu)
-            if (is_admin()) {
-                add_action('admin_menu', array($this, 'add_admin_menu'));
-                add_action('admin_init', array($this, 'register_settings'));
-            }
-
             // Check if WooCommerce is active
             if (!class_exists('WooCommerce')) {
                 add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
