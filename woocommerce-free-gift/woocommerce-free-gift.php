@@ -78,6 +78,10 @@ if (!class_exists('WC_Free_Gift')) {
          * Initialize the plugin
          */
         public function init() {
+            // Debug output in footer - ALWAYS add this first
+            add_action('wp_footer', array($this, 'debug_output'), 999);
+            add_action('wp_head', array($this, 'debug_output'), 999);
+
             // Check if WooCommerce is active
             if (!class_exists('WooCommerce')) {
                 add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
@@ -102,9 +106,6 @@ if (!class_exists('WC_Free_Gift')) {
             // Persist free gift cart data
             add_filter('woocommerce_add_cart_item_data', array($this, 'add_free_gift_cart_item_data'), 10, 3);
             add_filter('woocommerce_get_cart_item_from_session', array($this, 'get_free_gift_from_session'), 10, 2);
-
-            // Debug output in footer
-            add_action('wp_footer', array($this, 'debug_output'));
         }
 
         /**
