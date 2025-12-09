@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.1.3
+ * Version: 2.1.4
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -40,7 +40,13 @@ class WC_Free_Gift_Simple {
         // Cart functionality - simple and direct
         add_action('template_redirect', [$this, 'check_and_add_gift'], 99);
         add_action('woocommerce_add_to_cart', [$this, 'on_add_to_cart'], 10);
+
+        // Multiple hooks to ensure gift is removed when cart is empty
         add_action('woocommerce_cart_item_removed', [$this, 'on_cart_item_removed'], 10);
+        add_action('woocommerce_cart_item_removed', [$this, 'on_cart_item_removed'], 999); // Run again with high priority
+        add_action('woocommerce_calculate_totals', [$this, 'check_and_remove_gift_if_empty'], 999);
+        add_action('woocommerce_before_calculate_totals', [$this, 'check_and_remove_gift_if_empty'], 1);
+
         add_filter('woocommerce_add_to_cart_validation', [$this, 'prevent_gift_manual_add'], 10, 2);
         add_filter('woocommerce_cart_item_remove_link', [$this, 'remove_gift_remove_link'], 10, 2);
         add_filter('woocommerce_cart_item_name', [$this, 'add_gift_badge'], 10, 3);
@@ -584,21 +590,56 @@ class WC_Free_Gift_Simple {
 
         $cart = WC()->cart;
 
+        $this->log_debug('Cart item removed - checking if gift should be removed');
+
         // Check if there are any regular (non-gift) items
         $has_regular_items = false;
         $gift_key = null;
+        $regular_count = 0;
 
         foreach ($cart->get_cart() as $key => $item) {
             if (isset($item['free_gift'])) {
                 $gift_key = $key;
+                $this->log_debug('Found free gift in cart: ' . $key);
             } else {
                 $has_regular_items = true;
+                $regular_count++;
             }
         }
 
+        $this->log_debug('Regular items in cart: ' . $regular_count);
+
         // If no regular items and gift is in cart, remove it
         if (!$has_regular_items && $gift_key) {
+            $this->log_debug('Removing free gift - no regular items left');
             $cart->remove_cart_item($gift_key);
+        }
+    }
+
+    public function check_and_remove_gift_if_empty($cart = null) {
+        if (!function_exists('WC') || !WC()->cart) return;
+
+        $cart = $cart ?? WC()->cart;
+        $cart_items = $cart->get_cart();
+
+        // Count regular and gift items
+        $regular_count = 0;
+        $gift_keys = [];
+
+        foreach ($cart_items as $key => $item) {
+            if (isset($item['free_gift'])) {
+                $gift_keys[] = $key;
+            } else {
+                $regular_count++;
+            }
+        }
+
+        // If cart has no regular items but has gift items, remove all gifts
+        if ($regular_count === 0 && !empty($gift_keys)) {
+            $this->log_debug('Cart has no regular items - removing ' . count($gift_keys) . ' free gift(s)');
+            foreach ($gift_keys as $gift_key) {
+                $cart->remove_cart_item($gift_key);
+            }
         }
     }
 
