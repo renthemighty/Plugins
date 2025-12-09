@@ -102,6 +102,9 @@ if (!class_exists('WC_Free_Gift')) {
             // Persist free gift cart data
             add_filter('woocommerce_add_cart_item_data', array($this, 'add_free_gift_cart_item_data'), 10, 3);
             add_filter('woocommerce_get_cart_item_from_session', array($this, 'get_free_gift_from_session'), 10, 2);
+
+            // Debug output in footer
+            add_action('wp_footer', array($this, 'debug_output'));
         }
 
         /**
@@ -458,6 +461,39 @@ if (!class_exists('WC_Free_Gift')) {
                 $cart_item['data']->set_price(0);
             }
             return $cart_item;
+        }
+
+        /**
+         * Debug output in footer
+         */
+        public function debug_output() {
+            $free_gift_id = get_option('wc_free_gift_product_id', 0);
+            echo '<!-- WC FREE GIFT DEBUG -->';
+            echo '<!-- Plugin loaded: YES -->';
+            echo '<!-- Free Gift ID: ' . $free_gift_id . ' -->';
+
+            if (function_exists('WC') && WC()->cart) {
+                echo '<!-- Cart exists: YES -->';
+                echo '<!-- Cart items: ' . WC()->cart->get_cart_contents_count() . ' -->';
+
+                foreach (WC()->cart->get_cart() as $item) {
+                    echo '<!-- Item: ID=' . $item['product_id'] . ' -->';
+                }
+
+                if ($free_gift_id > 0) {
+                    $product = wc_get_product($free_gift_id);
+                    if ($product) {
+                        echo '<!-- Free gift product found: ' . $product->get_name() . ' -->';
+                        echo '<!-- Product status: ' . $product->get_status() . ' -->';
+                        echo '<!-- Product type: ' . $product->get_type() . ' -->';
+                    } else {
+                        echo '<!-- Free gift product NOT FOUND -->';
+                    }
+                }
+            } else {
+                echo '<!-- Cart exists: NO -->';
+            }
+            echo '<!-- END DEBUG -->';
         }
     }
 }
