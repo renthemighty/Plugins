@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Free Gift
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
- * Version: 2.1.1
+ * Version: 2.1.2
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -166,31 +166,41 @@ class WC_Free_Gift_Simple {
         if (isset($_POST['wc_free_gift_nonce'])) {
             check_admin_referer('wc_free_gift_save', 'wc_free_gift_nonce');
 
-            $enabled = isset($_POST['wc_free_gift_enabled']) ? 1 : 0;
-            update_option('wc_free_gift_enabled', $enabled);
+            // Handle clear log (separate action)
+            if (isset($_POST['clear_log'])) {
+                $this->clear_debug_log();
+                echo '<div class="notice notice-success"><p>Debug log cleared!</p></div>';
+            } else {
+                // Only save settings if not clearing log
+                $enabled = isset($_POST['wc_free_gift_enabled']) ? 1 : 0;
+                $debug_mode = isset($_POST['wc_free_gift_debug']) ? 1 : 0;
+                update_option('wc_free_gift_enabled', $enabled);
+                update_option('wc_free_gift_debug', $debug_mode);
 
-            // Save country-based rules
-            $rules = [];
-            if (isset($_POST['gift_rules']) && is_array($_POST['gift_rules'])) {
-                foreach ($_POST['gift_rules'] as $rule) {
-                    $product_id = absint($rule['product_id'] ?? 0);
-                    $variation_id = absint($rule['variation_id'] ?? 0);
-                    $country = sanitize_text_field($rule['country'] ?? '');
+                // Save country-based rules
+                $rules = [];
+                if (isset($_POST['gift_rules']) && is_array($_POST['gift_rules'])) {
+                    foreach ($_POST['gift_rules'] as $rule) {
+                        $product_id = absint($rule['product_id'] ?? 0);
+                        $variation_id = absint($rule['variation_id'] ?? 0);
+                        $country = sanitize_text_field($rule['country'] ?? '');
 
-                    if ($product_id > 0 && $country) {
-                        $rules[] = [
-                            'product_id' => $product_id,
-                            'variation_id' => $variation_id,
-                            'country' => $country
-                        ];
+                        if ($product_id > 0 && $country) {
+                            $rules[] = [
+                                'product_id' => $product_id,
+                                'variation_id' => $variation_id,
+                                'country' => $country
+                            ];
+                        }
                     }
                 }
+                update_option('wc_free_gift_rules', $rules);
+                echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
             }
-            update_option('wc_free_gift_rules', $rules);
-            echo '<div class="notice notice-success"><p>Settings saved!</p></div>';
         }
 
         $enabled = get_option('wc_free_gift_enabled', 1);
+        $debug_mode = get_option('wc_free_gift_debug', 0);
         $rules = get_option('wc_free_gift_rules', []);
 
         // Get WooCommerce countries
@@ -209,6 +219,16 @@ class WC_Free_Gift_Simple {
                                 Enable automatic free gift
                             </label>
                             <p class="description">Turn the free gift feature on or off</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th>Debug Mode</th>
+                        <td>
+                            <label>
+                                <input type="checkbox" name="wc_free_gift_debug" value="1" <?php checked($debug_mode, 1); ?>>
+                                Enable debug logging
+                            </label>
+                            <p class="description">Log debugging information (only visible to administrators). Check debug log below after saving.</p>
                         </td>
                     </tr>
                     <tr>
@@ -276,6 +296,34 @@ class WC_Free_Gift_Simple {
                 </table>
                 <?php submit_button(); ?>
             </form>
+
+            <?php if ($debug_mode && current_user_can('manage_options')): ?>
+                <hr style="margin: 30px 0;">
+                <h2>Debug Log</h2>
+                <p><em>Only visible to administrators when debug mode is enabled.</em></p>
+                <?php
+                $debug_log = $this->get_debug_log();
+                if (!empty($debug_log)):
+                ?>
+                    <form method="post" style="margin-bottom:10px;">
+                        <?php wp_nonce_field('wc_free_gift_save', 'wc_free_gift_nonce'); ?>
+                        <input type="hidden" name="clear_log" value="1">
+                        <button type="submit" class="button">Clear Debug Log</button>
+                    </form>
+                    <div style="background:#f5f5f5;padding:15px;border:1px solid #ddd;max-height:400px;overflow-y:auto;font-family:monospace;font-size:12px;">
+                        <?php foreach (array_reverse($debug_log) as $entry): ?>
+                            <div style="margin-bottom:10px;padding:8px;background:white;border-left:3px solid #0073aa;">
+                                <strong><?php echo esc_html($entry['time']); ?></strong><br>
+                                <?php echo esc_html($entry['message']); ?><br>
+                                <small style="color:#666;">User ID: <?php echo $entry['user_id']; ?> | IP: <?php echo esc_html($entry['ip']); ?></small>
+                            </div>
+                        <?php endforeach; ?>
+                    </div>
+                <?php else: ?>
+                    <p><em>No debug log entries yet. Add items to cart to see debug information.</em></p>
+                <?php endif; ?>
+            <?php endif; ?>
+
             <script>
             jQuery(function($) {
                 var ruleIndex = <?php echo count($rules); ?>;
@@ -383,65 +431,115 @@ class WC_Free_Gift_Simple {
     }
 
     public function check_and_add_gift() {
-        if (!function_exists('WC') || !WC()->cart) return;
-        if (is_admin()) return;
-
-        // Check if feature is enabled
-        $enabled = get_option('wc_free_gift_enabled', 1);
-        if (!$enabled) return;
-
-        $cart = WC()->cart;
-        if ($cart->is_empty()) return;
-
-        // Get country-based rules
-        $rules = get_option('wc_free_gift_rules', []);
-        if (empty($rules)) return;
-
-        // Detect customer country
-        $customer_country = $this->get_customer_country();
-        if (!$customer_country) return;
-
-        // Find matching rule for this country
-        $matched_rule = null;
-        foreach ($rules as $rule) {
-            if ($rule['country'] === $customer_country) {
-                $matched_rule = $rule;
-                break;
+        try {
+            if (!function_exists('WC') || !WC()->cart) {
+                $this->log_debug('WooCommerce or cart not available');
+                return;
             }
-        }
+            if (is_admin()) return;
 
-        if (!$matched_rule) return;
+            // Check if feature is enabled
+            $enabled = get_option('wc_free_gift_enabled', 1);
+            if (!$enabled) {
+                $this->log_debug('Free gift feature is disabled');
+                return;
+            }
 
-        $gift_id = absint($matched_rule['product_id']);
-        $variation_id = absint($matched_rule['variation_id']);
-        if ($gift_id <= 0) return;
+            $cart = WC()->cart;
+            if ($cart->is_empty()) {
+                $this->log_debug('Cart is empty, skipping free gift');
+                return;
+            }
 
-        // Check if gift already in cart
-        foreach ($cart->get_cart() as $key => $item) {
+            // Get country-based rules
+            $rules = get_option('wc_free_gift_rules', []);
+            if (empty($rules)) {
+                $this->log_debug('No free gift rules configured');
+                return;
+            }
+
+            // Detect customer country
+            $customer_country = $this->get_customer_country();
+            if (!$customer_country) {
+                $this->log_debug('Could not detect customer country');
+                return;
+            }
+
+            $this->log_debug('Customer country detected: ' . $customer_country);
+
+            // Find matching rule for this country
+            $matched_rule = null;
+            foreach ($rules as $rule) {
+                if ($rule['country'] === $customer_country) {
+                    $matched_rule = $rule;
+                    break;
+                }
+            }
+
+            if (!$matched_rule) {
+                $this->log_debug('No free gift rule found for country: ' . $customer_country);
+                return; // Silent - no error for user
+            }
+
+            $gift_id = absint($matched_rule['product_id']);
+            $variation_id = absint($matched_rule['variation_id']);
+
+            if ($gift_id <= 0) {
+                $this->log_debug('Invalid product ID in matched rule');
+                return;
+            }
+
+            $this->log_debug('Matched rule - Product ID: ' . $gift_id . ', Variation ID: ' . $variation_id);
+
+            // Check if gift already in cart
+            foreach ($cart->get_cart() as $key => $item) {
+                if ($variation_id > 0) {
+                    // For variations, check variation_id
+                    if ($item['variation_id'] == $variation_id && isset($item['free_gift'])) {
+                        $this->log_debug('Free gift already in cart (variation)');
+                        return; // Already there
+                    }
+                } else {
+                    // For simple products, check product_id
+                    if ($item['product_id'] == $gift_id && isset($item['free_gift'])) {
+                        $this->log_debug('Free gift already in cart (product)');
+                        return; // Already there
+                    }
+                }
+            }
+
+            // Add it
             if ($variation_id > 0) {
-                // For variations, check variation_id
-                if ($item['variation_id'] == $variation_id && isset($item['free_gift'])) {
-                    return; // Already there
+                // Add variation
+                $variation = wc_get_product($variation_id);
+                if (!$variation) {
+                    $this->log_debug('ERROR: Variation not found - ID: ' . $variation_id);
+                    return;
+                }
+                $attributes = $variation->get_variation_attributes();
+                $result = $cart->add_to_cart($gift_id, 1, $variation_id, $attributes, ['free_gift' => true]);
+                if ($result) {
+                    $this->log_debug('SUCCESS: Added variation to cart - ID: ' . $variation_id);
+                } else {
+                    $this->log_debug('ERROR: Failed to add variation to cart - ID: ' . $variation_id);
                 }
             } else {
-                // For simple products, check product_id
-                if ($item['product_id'] == $gift_id && isset($item['free_gift'])) {
-                    return; // Already there
+                // Add simple product
+                $product = wc_get_product($gift_id);
+                if (!$product) {
+                    $this->log_debug('ERROR: Product not found - ID: ' . $gift_id);
+                    return;
+                }
+                $result = $cart->add_to_cart($gift_id, 1, 0, [], ['free_gift' => true]);
+                if ($result) {
+                    $this->log_debug('SUCCESS: Added product to cart - ID: ' . $gift_id);
+                } else {
+                    $this->log_debug('ERROR: Failed to add product to cart - ID: ' . $gift_id);
                 }
             }
-        }
-
-        // Add it
-        if ($variation_id > 0) {
-            // Add variation
-            $variation = wc_get_product($variation_id);
-            if ($variation) {
-                $attributes = $variation->get_variation_attributes();
-                $cart->add_to_cart($gift_id, 1, $variation_id, $attributes, ['free_gift' => true]);
-            }
-        } else {
-            // Add simple product
-            $cart->add_to_cart($gift_id, 1, 0, [], ['free_gift' => true]);
+        } catch (Exception $e) {
+            $this->log_debug('EXCEPTION in check_and_add_gift: ' . $e->getMessage());
+            // Silent failure - don't show error to customer
         }
     }
 
@@ -570,6 +668,34 @@ class WC_Free_Gift_Simple {
             .free-gift-item .quantity input { display: none !important; }
             .free-gift-item .quantity { pointer-events: none !important; }
         </style>';
+    }
+
+    private function log_debug($message) {
+        $debug_mode = get_option('wc_free_gift_debug', 0);
+        if (!$debug_mode) return;
+
+        $log = get_option('wc_free_gift_debug_log', []);
+        $log[] = [
+            'time' => current_time('mysql'),
+            'message' => $message,
+            'user_id' => get_current_user_id(),
+            'ip' => $_SERVER['REMOTE_ADDR'] ?? 'unknown'
+        ];
+
+        // Keep only last 100 entries
+        if (count($log) > 100) {
+            $log = array_slice($log, -100);
+        }
+
+        update_option('wc_free_gift_debug_log', $log);
+    }
+
+    public function get_debug_log() {
+        return get_option('wc_free_gift_debug_log', []);
+    }
+
+    public function clear_debug_log() {
+        delete_option('wc_free_gift_debug_log');
     }
 }
 
