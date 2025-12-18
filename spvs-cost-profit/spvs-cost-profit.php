@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Track product costs and calculate Total Cost of Products (TCOP) and Total Retail Value (TRV) for inventory.
- * Version: 2.0.3
+ * Version: 2.0.4
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -56,7 +56,7 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_menu', array( $this, 'register_admin_page' ) );
 
         // TCOP bar on orders screen
-        add_action( 'in_admin_header', array( $this, 'render_tcop_bar' ) );
+        add_action( 'admin_notices', array( $this, 'render_tcop_bar' ) );
 
         // Admin actions
         add_action( 'admin_post_spvs_recalculate', array( $this, 'handle_recalculate' ) );
