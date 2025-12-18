@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Track product costs and calculate Total Cost of Products (TCOP) and Total Retail Value (TRV) for inventory.
- * Version: 2.0.4
+ * Version: 2.0.5
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -56,7 +56,7 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_menu', array( $this, 'register_admin_page' ) );
 
         // TCOP bar on orders screen
-        add_action( 'admin_notices', array( $this, 'render_tcop_bar' ) );
+        add_action( 'all_admin_notices', array( $this, 'render_tcop_bar' ) );
 
         // Admin actions
         add_action( 'admin_post_spvs_recalculate', array( $this, 'handle_recalculate' ) );
@@ -222,36 +222,38 @@ final class SPVS_Cost_Profit {
         $updated = isset( $totals['updated'] ) ? $totals['updated'] : 0;
 
         ?>
-        <div style="background: #fff; border-left: 4px solid #5b32d1; padding: 24px; margin: 0 20px 20px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.08); position: relative; z-index: 1000; overflow: visible;">
-            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 40px; flex-wrap: wrap;">
+        <div class="spvs-tcop-bar" style="all: initial; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen-Sans, Ubuntu, Cantarell, 'Helvetica Neue', sans-serif;">
+            <div style="background: #fff; border-left: 4px solid #5b32d1; padding: 24px; margin: 20px 20px 20px 0; box-shadow: 0 1px 4px rgba(0,0,0,0.08); display: block;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 40px; flex-wrap: wrap;">
 
-                <div style="display: flex; gap: 50px; align-items: flex-start; flex-wrap: wrap;">
-                    <div>
-                        <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">TOTAL COST</div>
-                        <div style="font-size: 26px; font-weight: 700; color: #2c3e50; line-height: 1;"><?php echo wc_price( $tcop ); ?></div>
-                    </div>
+                    <div style="display: flex; gap: 50px; align-items: flex-start; flex-wrap: wrap;">
+                        <div>
+                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">TOTAL COST</div>
+                            <div style="font-size: 26px; font-weight: 700; color: #2c3e50; line-height: 1.2;"><?php echo wc_price( $tcop ); ?></div>
+                        </div>
 
-                    <div style="width: 1px; height: 50px; background: #e0e0e0; align-self: center;"></div>
+                        <div style="width: 1px; height: 50px; background: #e0e0e0; align-self: center;"></div>
 
-                    <div>
-                        <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">RETAIL VALUE</div>
-                        <div style="font-size: 26px; font-weight: 700; color: #27ae60; line-height: 1;"><?php echo wc_price( $trv ); ?></div>
-                    </div>
+                        <div>
+                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">RETAIL VALUE</div>
+                            <div style="font-size: 26px; font-weight: 700; color: #27ae60; line-height: 1.2;"><?php echo wc_price( $trv ); ?></div>
+                        </div>
 
-                    <div style="width: 1px; height: 50px; background: #e0e0e0; align-self: center;"></div>
+                        <div style="width: 1px; height: 50px; background: #e0e0e0; align-self: center;"></div>
 
-                    <div>
-                        <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">SPREAD</div>
-                        <div style="font-size: 26px; font-weight: 700; color: <?php echo $spread >= 0 ? '#27ae60' : '#e74c3c'; ?>; line-height: 1;">
-                            <?php echo wc_price( $spread ); ?>
+                        <div>
+                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">SPREAD</div>
+                            <div style="font-size: 26px; font-weight: 700; color: <?php echo $spread >= 0 ? '#27ae60' : '#e74c3c'; ?>; line-height: 1.2;">
+                                <?php echo wc_price( $spread ); ?>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div style="font-size: 11px; color: #999; font-style: italic; padding-top: 12px;">
-                    <?php if ( $updated ) : ?>
-                        <span style="opacity: 0.7;">⟳</span> <?php echo human_time_diff( $updated, time() ); ?> ago
-                    <?php endif; ?>
+                    <div style="font-size: 11px; color: #999; font-style: italic; padding-top: 12px;">
+                        <?php if ( $updated ) : ?>
+                            <span style="opacity: 0.7;">⟳</span> <?php echo human_time_diff( $updated, time() ); ?> ago
+                        <?php endif; ?>
+                    </div>
                 </div>
             </div>
         </div>
