@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost Data Backup Export
  * Description: One-time use plugin to export all SPVS cost data to CSV. Deactivate and delete after use.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Megatron
  * License: GPL-2.0+
  */
@@ -12,12 +12,33 @@ if ( ! defined( 'ABSPATH' ) ) exit;
 class SPVS_Cost_Backup_Exporter {
 
     public function __construct() {
+        add_action( 'admin_notices', array( $this, 'show_export_notice' ) );
         add_action( 'admin_menu', array( $this, 'add_menu' ) );
         add_action( 'admin_post_spvs_backup_export', array( $this, 'export_costs' ) );
     }
 
+    public function show_export_notice() {
+        $screen = get_current_screen();
+        if ( ! $screen || $screen->id !== 'plugins' ) return;
+
+        $export_url = wp_nonce_url( admin_url( 'admin-post.php?action=spvs_backup_export' ), 'spvs_backup_export' );
+        ?>
+        <div class="notice notice-info is-dismissible" style="border-left-color: #2271b1; border-left-width: 4px;">
+            <h2 style="margin-top: 10px;">📥 SPVS Cost Data Backup Ready</h2>
+            <p><strong>Click the button below to download all your product costs to CSV:</strong></p>
+            <p>
+                <a href="<?php echo esc_url( $export_url ); ?>" class="button button-primary button-hero">
+                    Download Cost Data Backup Now
+                </a>
+            </p>
+            <p><em>After downloading, deactivate and delete this plugin. You won't need it anymore.</em></p>
+        </div>
+        <?php
+    }
+
     public function add_menu() {
-        add_management_page(
+        add_submenu_page(
+            'tools.php',
             'SPVS Cost Backup',
             'SPVS Cost Backup',
             'manage_options',
@@ -27,6 +48,7 @@ class SPVS_Cost_Backup_Exporter {
     }
 
     public function render_page() {
+        $export_url = wp_nonce_url( admin_url( 'admin-post.php?action=spvs_backup_export' ), 'spvs_backup_export' );
         ?>
         <div class="wrap">
             <h1>SPVS Cost Data Backup</h1>
@@ -42,15 +64,11 @@ class SPVS_Cost_Backup_Exporter {
                 <p>Click the button below to download a CSV file containing all product costs from your database.</p>
                 <p>The CSV will include: Product ID, SKU, Name, Type, and Cost</p>
 
-                <form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>">
-                    <input type="hidden" name="action" value="spvs_backup_export">
-                    <?php wp_nonce_field( 'spvs_backup_export' ); ?>
-                    <p>
-                        <button type="submit" class="button button-primary button-hero">
-                            📥 Download Cost Data Backup (CSV)
-                        </button>
-                    </p>
-                </form>
+                <p>
+                    <a href="<?php echo esc_url( $export_url ); ?>" class="button button-primary button-hero">
+                        📥 Download Cost Data Backup (CSV)
+                    </a>
+                </p>
 
                 <hr>
                 <h3>Next Steps:</h3>
@@ -92,7 +110,7 @@ class SPVS_Cost_Backup_Exporter {
         $output = fopen( 'php://output', 'w' );
 
         // Header row
-        fputcsv( $output, array( 'product_id', 'sku', 'name', 'type', 'cost' ) );
+        fputcsv( $output, array( 'product_id', 'sku', 'cost' ) );
 
         $exported = 0;
 
@@ -109,8 +127,6 @@ class SPVS_Cost_Backup_Exporter {
             fputcsv( $output, array(
                 $product_id,
                 $product->get_sku() ?: '',
-                $product->get_name(),
-                $product->get_type(),
                 $cost,
             ) );
 
