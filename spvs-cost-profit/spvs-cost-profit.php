@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Track product costs and calculate Total Cost of Products (TCOP) and Total Retail Value (TRV) for inventory.
- * Version: 2.0.5
+ * Version: 2.0.6
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -228,14 +228,14 @@ final class SPVS_Cost_Profit {
 
                     <div style="display: flex; gap: 50px; align-items: flex-start; flex-wrap: wrap;">
                         <div>
-                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">TOTAL COST</div>
+                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">TCOP</div>
                             <div style="font-size: 26px; font-weight: 700; color: #2c3e50; line-height: 1.2;"><?php echo wc_price( $tcop ); ?></div>
                         </div>
 
                         <div style="width: 1px; height: 50px; background: #e0e0e0; align-self: center;"></div>
 
                         <div>
-                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">RETAIL VALUE</div>
+                            <div style="font-size: 10px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px;">TRV</div>
                             <div style="font-size: 26px; font-weight: 700; color: #27ae60; line-height: 1.2;"><?php echo wc_price( $trv ); ?></div>
                         </div>
 
