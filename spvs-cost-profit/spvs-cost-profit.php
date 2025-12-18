@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Track product costs and calculate Total Cost of Products (TCOP) and Total Retail Value (TRV) for inventory.
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -54,6 +54,9 @@ final class SPVS_Cost_Profit {
 
         // Admin page
         add_action( 'admin_menu', array( $this, 'register_admin_page' ) );
+
+        // TCOP bar on orders screen
+        add_action( 'in_admin_header', array( $this, 'render_tcop_bar' ) );
 
         // Admin actions
         add_action( 'admin_post_spvs_recalculate', array( $this, 'handle_recalculate' ) );
@@ -200,6 +203,55 @@ final class SPVS_Cost_Profit {
         ), false );
 
         delete_transient( self::RECALC_LOCK_TRANSIENT );
+    }
+
+    // ============ TCOP Bar ============
+
+    public function render_tcop_bar() {
+        $screen = get_current_screen();
+        if ( ! $screen ) return;
+
+        // Show on WooCommerce orders pages (both classic and HPOS)
+        $show = in_array( $screen->id, array( 'edit-shop_order', 'woocommerce_page_wc-orders', 'shop_order' ), true );
+        if ( ! $show ) return;
+
+        $totals = get_option( self::INVENTORY_TOTALS_OPTION, array() );
+        $tcop = isset( $totals['tcop'] ) ? $totals['tcop'] : 0;
+        $trv = isset( $totals['trv'] ) ? $totals['trv'] : 0;
+        $spread = $trv - $tcop;
+        $updated = isset( $totals['updated'] ) ? $totals['updated'] : 0;
+
+        ?>
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; padding: 12px 20px; margin: 0 0 20px -20px; margin-left: 0; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <div style="display: flex; align-items: center; justify-content: space-between; max-width: 100%; gap: 30px; flex-wrap: wrap;">
+
+                <div style="display: flex; gap: 30px; align-items: center; flex-wrap: wrap;">
+                    <div>
+                        <div style="font-size: 11px; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px;">TCOP</div>
+                        <div style="font-size: 20px; font-weight: bold;"><?php echo wc_price( $tcop ); ?></div>
+                    </div>
+
+                    <div>
+                        <div style="font-size: 11px; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px;">TRV</div>
+                        <div style="font-size: 20px; font-weight: bold;"><?php echo wc_price( $trv ); ?></div>
+                    </div>
+
+                    <div>
+                        <div style="font-size: 11px; opacity: 0.9; text-transform: uppercase; letter-spacing: 0.5px;">Spread</div>
+                        <div style="font-size: 20px; font-weight: bold; color: <?php echo $spread >= 0 ? '#90EE90' : '#FFB6C1'; ?>;">
+                            <?php echo wc_price( $spread ); ?>
+                        </div>
+                    </div>
+                </div>
+
+                <div style="font-size: 11px; opacity: 0.8;">
+                    <?php if ( $updated ) : ?>
+                        Updated <?php echo human_time_diff( $updated, time() ); ?> ago
+                    <?php endif; ?>
+                </div>
+            </div>
+        </div>
+        <?php
     }
 
     // ============ Admin Page ============
