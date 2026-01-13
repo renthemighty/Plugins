@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Review Manager
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Manually add and edit product reviews with custom users and star ratings
- * Version: 1.1.0
+ * Version: 1.1.1
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0

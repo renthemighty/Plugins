@@ -269,20 +269,36 @@ jQuery(function($) {
         var originalText = $submitBtn.text();
         $submitBtn.prop('disabled', true).text('Updating...');
 
-        $.post(wcrmData.ajaxurl, formData, function(response) {
-            if (response.success) {
-                alert(response.data.message);
-                $('#wcrm-edit-modal').fadeOut(200);
-                // Reload reviews
-                $('#wcrm-load-reviews').click();
-            } else {
-                alert(response.data);
-            }
-        }).fail(function() {
-            alert('An error occurred. Please try again.');
-        }).always(function() {
-            $submitBtn.prop('disabled', false).text(originalText);
-        });
+        $.post(wcrmData.ajaxurl, formData)
+            .done(function(response) {
+                if (response.success) {
+                    // Close modal immediately
+                    $('#wcrm-edit-modal').fadeOut(200);
+
+                    // Show success message in reviews list
+                    $('#wcrm-reviews-list').prepend('<div class="wcrm-message success" style="margin-bottom: 15px;">' + response.data.message + '</div>');
+
+                    // Reload reviews after a short delay
+                    setTimeout(function() {
+                        $('#wcrm-load-reviews').click();
+                    }, 300);
+
+                    // Remove success message after 3 seconds
+                    setTimeout(function() {
+                        $('.wcrm-message.success').fadeOut(function() {
+                            $(this).remove();
+                        });
+                    }, 3000);
+                } else {
+                    alert(response.data);
+                    $submitBtn.prop('disabled', false).text(originalText);
+                }
+            })
+            .fail(function(jqXHR, textStatus, errorThrown) {
+                console.error('Edit review error:', textStatus, errorThrown);
+                alert('An error occurred while updating the review. Please try again.');
+                $submitBtn.prop('disabled', false).text(originalText);
+            });
     });
 
     // Delete Review Button

@@ -97,6 +97,12 @@ A simple and powerful WordPress plugin that allows you to manually add and edit 
 
 ## Changelog
 
+### Version 1.1.1
+- Fixed edit modal hanging issue - modal now closes immediately on successful update
+- Improved user experience with inline success messages instead of alerts
+- Better error handling and logging for debugging
+- Smoother review reload after editing
+
 ### Version 1.1.0
 - Added ability to set custom review dates when adding reviews
 - Added ability to edit review dates
