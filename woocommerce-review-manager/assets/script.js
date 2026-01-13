@@ -103,7 +103,8 @@ jQuery(function($) {
             user_id: $('#wcrm-user').val(),
             custom_name: $('#wcrm-custom-name').val(),
             custom_email: $('#wcrm-custom-email').val(),
-            review_text: tinyMCE.get('wcrm-review-text') ? tinyMCE.get('wcrm-review-text').getContent() : $('#wcrm-review-text').val()
+            review_text: tinyMCE.get('wcrm-review-text') ? tinyMCE.get('wcrm-review-text').getContent() : $('#wcrm-review-text').val(),
+            review_date: $('#wcrm-review-date').val()
         };
 
         // Show loading state
@@ -229,6 +230,18 @@ jQuery(function($) {
                     $('#wcrm-edit-review-text').val(review.review_text);
                 }
 
+                // Format and set the date for datetime-local input
+                if (review.date) {
+                    var dateObj = new Date(review.date);
+                    var year = dateObj.getFullYear();
+                    var month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                    var day = String(dateObj.getDate()).padStart(2, '0');
+                    var hours = String(dateObj.getHours()).padStart(2, '0');
+                    var minutes = String(dateObj.getMinutes()).padStart(2, '0');
+                    var formattedDate = year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+                    $('#wcrm-edit-review-date').val(formattedDate);
+                }
+
                 // Show modal
                 $('#wcrm-edit-modal').fadeIn(200);
             } else {
@@ -248,7 +261,8 @@ jQuery(function($) {
             security: wcrmData.nonce,
             comment_id: $('#edit-comment-id').val(),
             rating: $('input[name="edit_rating"]:checked').val(),
-            review_text: tinyMCE.get('wcrm-edit-review-text') ? tinyMCE.get('wcrm-edit-review-text').getContent() : $('#wcrm-edit-review-text').val()
+            review_text: tinyMCE.get('wcrm-edit-review-text') ? tinyMCE.get('wcrm-edit-review-text').getContent() : $('#wcrm-edit-review-text').val(),
+            review_date: $('#wcrm-edit-review-date').val()
         };
 
         var $submitBtn = $(this).find('button[type="submit"]');

@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Review Manager
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Manually add and edit product reviews with custom users and star ratings
- * Version: 1.0.0
+ * Version: 1.1.0
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -157,6 +157,7 @@ class WC_Review_Manager {
         $user_id = absint($_POST['user_id'] ?? 0);
         $custom_name = sanitize_text_field($_POST['custom_name'] ?? '');
         $custom_email = sanitize_email($_POST['custom_email'] ?? '');
+        $review_date = sanitize_text_field($_POST['review_date'] ?? '');
 
         // Validation
         if ($product_id <= 0) {
@@ -202,6 +203,19 @@ class WC_Review_Manager {
             $comment_user_id = 0;
         }
 
+        // Handle review date
+        $comment_date = current_time('mysql');
+        $comment_date_gmt = current_time('mysql', 1);
+
+        if (!empty($review_date)) {
+            // Validate and convert the date
+            $date_timestamp = strtotime($review_date);
+            if ($date_timestamp !== false) {
+                $comment_date = date('Y-m-d H:i:s', $date_timestamp);
+                $comment_date_gmt = gmdate('Y-m-d H:i:s', $date_timestamp);
+            }
+        }
+
         // Insert comment (review)
         $comment_data = [
             'comment_post_ID' => $product_id,
@@ -212,8 +226,8 @@ class WC_Review_Manager {
             'comment_parent' => 0,
             'user_id' => $comment_user_id,
             'comment_approved' => 1,
-            'comment_date' => current_time('mysql'),
-            'comment_date_gmt' => current_time('mysql', 1)
+            'comment_date' => $comment_date,
+            'comment_date_gmt' => $comment_date_gmt
         ];
 
         $comment_id = wp_insert_comment($comment_data);
@@ -240,6 +254,7 @@ class WC_Review_Manager {
         $comment_id = absint($_POST['comment_id'] ?? 0);
         $rating = absint($_POST['rating'] ?? 0);
         $review_text = wp_kses_post($_POST['review_text'] ?? '');
+        $review_date = sanitize_text_field($_POST['review_date'] ?? '');
 
         // Validation
         if ($comment_id <= 0) {
@@ -259,11 +274,23 @@ class WC_Review_Manager {
             wp_send_json_error('Please enter review text');
         }
 
-        // Update comment
-        $result = wp_update_comment([
+        // Prepare update data
+        $update_data = [
             'comment_ID' => $comment_id,
             'comment_content' => $review_text
-        ]);
+        ];
+
+        // Handle review date if provided
+        if (!empty($review_date)) {
+            $date_timestamp = strtotime($review_date);
+            if ($date_timestamp !== false) {
+                $update_data['comment_date'] = date('Y-m-d H:i:s', $date_timestamp);
+                $update_data['comment_date_gmt'] = gmdate('Y-m-d H:i:s', $date_timestamp);
+            }
+        }
+
+        // Update comment
+        $result = wp_update_comment($update_data);
 
         if ($result === false) {
             wp_send_json_error('Failed to update review');
@@ -484,6 +511,13 @@ class WC_Review_Manager {
                                     <p class="description">Enter the review content</p>
                                 </td>
                             </tr>
+                            <tr>
+                                <th>Review Date</th>
+                                <td>
+                                    <input type="datetime-local" name="review_date" id="wcrm-review-date" class="regular-text">
+                                    <p class="description">Leave blank to use current date/time, or set a custom date</p>
+                                </td>
+                            </tr>
                         </table>
                         <p class="submit">
                             <button type="submit" class="button button-primary button-large">Add Review</button>
@@ -543,6 +577,13 @@ class WC_Review_Manager {
                                             'quicktags' => true
                                         ]);
                                         ?>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <th>Review Date</th>
+                                    <td>
+                                        <input type="datetime-local" name="edit_review_date" id="wcrm-edit-review-date" class="regular-text">
+                                        <p class="description">Change the date/time of this review</p>
                                     </td>
                                 </tr>
                             </table>

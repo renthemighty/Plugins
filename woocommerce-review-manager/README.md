@@ -6,11 +6,12 @@ A simple and powerful WordPress plugin that allows you to manually add and edit 
 
 - **Add Reviews Manually**: Add product reviews from external sources or manually create reviews for your products
 - **Star Ratings**: Select from 1-5 star ratings for each review
+- **Custom Review Dates**: Set custom dates for reviews when importing from other platforms
 - **Flexible User Options**:
   - Select from existing WordPress users
   - Add custom reviewer names and emails for external reviews
 - **Rich Text Editor**: Use WordPress's built-in editor to format review content
-- **Edit Reviews**: Modify existing reviews including rating and content
+- **Edit Reviews**: Modify existing reviews including rating, content, and date
 - **Delete Reviews**: Remove reviews with confirmation
 - **Product Search**: Easily search and select products by name, SKU, or ID
 - **User Search**: Search for existing users by username, email, or display name
@@ -95,6 +96,12 @@ A simple and powerful WordPress plugin that allows you to manually add and edit 
 - Select2 integration for enhanced dropdowns
 
 ## Changelog
+
+### Version 1.1.0
+- Added ability to set custom review dates when adding reviews
+- Added ability to edit review dates
+- Date field with datetime picker for easy date/time selection
+- Perfect for importing reviews from other platforms with original dates
 
 ### Version 1.0.0
 - Initial release

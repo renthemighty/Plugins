@@ -295,6 +295,23 @@
     font-style: italic;
 }
 
+/* Date Input */
+input[type="datetime-local"] {
+    padding: 6px 10px;
+    font-size: 14px;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    background-color: #fff;
+    color: #2c3338;
+    transition: border-color 0.2s;
+}
+
+input[type="datetime-local"]:focus {
+    border-color: #2271b1;
+    outline: 2px solid transparent;
+    box-shadow: 0 0 0 1px #2271b1;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
     .wcrm-search-section {
