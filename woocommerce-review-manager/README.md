@@ -97,6 +97,15 @@ A simple and powerful WordPress plugin that allows you to manually add and edit 
 
 ## Changelog
 
+### Version 1.1.2
+- **Performance Optimization**: Added request queue system with rate limiting
+- Ensures maximum 1 request per second to prevent server overload
+- Increased search debounce delay to 500ms for better performance
+- All AJAX operations now queued and batched automatically
+- Visual feedback shows when requests are queued vs processing
+- Prevents multiple simultaneous requests that could hang the interface
+- Better button state management during async operations
+
 ### Version 1.1.1
 - Fixed edit modal hanging issue - modal now closes immediately on successful update
 - Improved user experience with inline success messages instead of alerts

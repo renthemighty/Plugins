@@ -1,12 +1,68 @@
 jQuery(function($) {
     'use strict';
 
+    // Request Queue and Rate Limiting System
+    var wcrmRequestQueue = {
+        queue: [],
+        processing: false,
+        lastRequestTime: 0,
+        minDelay: 1000, // Minimum 1 second between requests
+
+        add: function(requestFunc) {
+            this.queue.push(requestFunc);
+            this.process();
+        },
+
+        process: function() {
+            if (this.processing || this.queue.length === 0) {
+                return;
+            }
+
+            var now = Date.now();
+            var timeSinceLastRequest = now - this.lastRequestTime;
+
+            if (timeSinceLastRequest < this.minDelay) {
+                // Wait before processing next request
+                var self = this;
+                setTimeout(function() {
+                    self.process();
+                }, this.minDelay - timeSinceLastRequest);
+                return;
+            }
+
+            this.processing = true;
+            this.lastRequestTime = Date.now();
+            var requestFunc = this.queue.shift();
+
+            var self = this;
+            requestFunc().always(function() {
+                self.processing = false;
+                // Process next request after delay
+                setTimeout(function() {
+                    self.process();
+                }, self.minDelay);
+            });
+        }
+    };
+
+    // Debounce function for search inputs
+    function debounce(func, wait) {
+        var timeout;
+        return function() {
+            var context = this, args = arguments;
+            clearTimeout(timeout);
+            timeout = setTimeout(function() {
+                func.apply(context, args);
+            }, wait);
+        };
+    }
+
     // Initialize Select2 for product search (add form)
     $('#wcrm-product').selectWoo({
         ajax: {
             url: wcrmData.ajaxurl,
             dataType: 'json',
-            delay: 250,
+            delay: 500,
             data: function(params) {
                 return {
                     term: params.term,
@@ -32,7 +88,7 @@ jQuery(function($) {
         ajax: {
             url: wcrmData.ajaxurl,
             dataType: 'json',
-            delay: 250,
+            delay: 500,
             data: function(params) {
                 return {
                     term: params.term,
@@ -58,7 +114,7 @@ jQuery(function($) {
         ajax: {
             url: wcrmData.ajaxurl,
             dataType: 'json',
-            delay: 250,
+            delay: 500,
             data: function(params) {
                 return {
                     term: params.term,
@@ -110,48 +166,55 @@ jQuery(function($) {
         // Show loading state
         var $submitBtn = $(this).find('button[type="submit"]');
         var originalText = $submitBtn.text();
-        $submitBtn.prop('disabled', true).text('Adding Review...');
+        $submitBtn.prop('disabled', true).text('Adding Review (queued)...');
 
         // Remove any existing messages
         $('.wcrm-message').remove();
 
-        $.post(wcrmData.ajaxurl, formData, function(response) {
-            if (response.success) {
-                // Show success message
-                $('#wcrm-add-form').before('<div class="wcrm-message success">' + response.data.message + '</div>');
+        // Add to request queue
+        wcrmRequestQueue.add(function() {
+            $submitBtn.text('Adding Review...');
+            return $.post(wcrmData.ajaxurl, formData)
+                .done(function(response) {
+                    if (response.success) {
+                        // Show success message
+                        $('#wcrm-add-form').before('<div class="wcrm-message success">' + response.data.message + '</div>');
 
-                // Reset form
-                $('#wcrm-add-form')[0].reset();
-                $('#wcrm-product, #wcrm-user').val(null).trigger('change');
-                $('input[name="rating"]').prop('checked', false);
-                if (tinyMCE.get('wcrm-review-text')) {
-                    tinyMCE.get('wcrm-review-text').setContent('');
-                }
+                        // Reset form
+                        $('#wcrm-add-form')[0].reset();
+                        $('#wcrm-product, #wcrm-user').val(null).trigger('change');
+                        $('input[name="rating"]').prop('checked', false);
+                        if (tinyMCE.get('wcrm-review-text')) {
+                            tinyMCE.get('wcrm-review-text').setContent('');
+                        }
 
-                // Scroll to message
-                $('html, body').animate({
-                    scrollTop: $('.wcrm-message').offset().top - 100
-                }, 500);
+                        // Scroll to message
+                        $('html, body').animate({
+                            scrollTop: $('.wcrm-message').offset().top - 100
+                        }, 500);
 
-                // Remove message after 5 seconds
-                setTimeout(function() {
-                    $('.wcrm-message').fadeOut(function() {
-                        $(this).remove();
-                    });
-                }, 5000);
-            } else {
-                // Show error message
-                $('#wcrm-add-form').before('<div class="wcrm-message error">' + response.data + '</div>');
+                        // Remove message after 5 seconds
+                        setTimeout(function() {
+                            $('.wcrm-message').fadeOut(function() {
+                                $(this).remove();
+                            });
+                        }, 5000);
+                    } else {
+                        // Show error message
+                        $('#wcrm-add-form').before('<div class="wcrm-message error">' + response.data + '</div>');
 
-                // Scroll to message
-                $('html, body').animate({
-                    scrollTop: $('.wcrm-message').offset().top - 100
-                }, 500);
-            }
-        }).fail(function() {
-            $('#wcrm-add-form').before('<div class="wcrm-message error">An error occurred. Please try again.</div>');
-        }).always(function() {
-            $submitBtn.prop('disabled', false).text(originalText);
+                        // Scroll to message
+                        $('html, body').animate({
+                            scrollTop: $('.wcrm-message').offset().top - 100
+                        }, 500);
+                    }
+                })
+                .fail(function() {
+                    $('#wcrm-add-form').before('<div class="wcrm-message error">An error occurred. Please try again.</div>');
+                })
+                .always(function() {
+                    $submitBtn.prop('disabled', false).text(originalText);
+                });
         });
     });
 
@@ -165,90 +228,106 @@ jQuery(function($) {
         }
 
         // Show loading
-        $('#wcrm-reviews-list').html('<div class="wcrm-loading">Loading reviews...</div>');
+        $('#wcrm-reviews-list').html('<div class="wcrm-loading">Loading reviews (queued)...</div>');
 
-        $.get(wcrmData.ajaxurl, {
-            action: 'wcrm_list_reviews',
-            security: wcrmData.nonce,
-            product_id: productId
-        }, function(response) {
-            if (response.success) {
-                if (response.data.length === 0) {
-                    $('#wcrm-reviews-list').html('<div class="wcrm-empty">No reviews found for this product.</div>');
+        // Add to request queue
+        wcrmRequestQueue.add(function() {
+            $('#wcrm-reviews-list').html('<div class="wcrm-loading">Loading reviews...</div>');
+            return $.get(wcrmData.ajaxurl, {
+                action: 'wcrm_list_reviews',
+                security: wcrmData.nonce,
+                product_id: productId
+            })
+            .done(function(response) {
+                if (response.success) {
+                    if (response.data.length === 0) {
+                        $('#wcrm-reviews-list').html('<div class="wcrm-empty">No reviews found for this product.</div>');
+                    } else {
+                        var html = '';
+                        response.data.forEach(function(review) {
+                            var stars = getStarRating(review.rating);
+                            html += '<div class="wcrm-review-item" data-comment-id="' + review.comment_id + '">';
+                            html += '  <div class="wcrm-review-header">';
+                            html += '    <div>';
+                            html += '      <span class="wcrm-review-author">' + escapeHtml(review.author) + '</span>';
+                            html += '      <span class="wcrm-review-email">(' + escapeHtml(review.author_email) + ')</span>';
+                            html += '    </div>';
+                            html += '    <div class="wcrm-review-rating">' + stars + '</div>';
+                            html += '  </div>';
+                            html += '  <div class="wcrm-review-content">' + review.review_full + '</div>';
+                            html += '  <div class="wcrm-review-meta">';
+                            html += '    <span class="wcrm-review-date">Posted on: ' + review.date + '</span>';
+                            html += '    <div class="wcrm-review-actions">';
+                            html += '      <button class="button wcrm-edit-review" data-comment-id="' + review.comment_id + '">Edit</button>';
+                            html += '      <button class="button wcrm-delete-review" data-comment-id="' + review.comment_id + '">Delete</button>';
+                            html += '    </div>';
+                            html += '  </div>';
+                            html += '</div>';
+                        });
+                        $('#wcrm-reviews-list').html(html);
+                    }
                 } else {
-                    var html = '';
-                    response.data.forEach(function(review) {
-                        var stars = getStarRating(review.rating);
-                        html += '<div class="wcrm-review-item" data-comment-id="' + review.comment_id + '">';
-                        html += '  <div class="wcrm-review-header">';
-                        html += '    <div>';
-                        html += '      <span class="wcrm-review-author">' + escapeHtml(review.author) + '</span>';
-                        html += '      <span class="wcrm-review-email">(' + escapeHtml(review.author_email) + ')</span>';
-                        html += '    </div>';
-                        html += '    <div class="wcrm-review-rating">' + stars + '</div>';
-                        html += '  </div>';
-                        html += '  <div class="wcrm-review-content">' + review.review_full + '</div>';
-                        html += '  <div class="wcrm-review-meta">';
-                        html += '    <span class="wcrm-review-date">Posted on: ' + review.date + '</span>';
-                        html += '    <div class="wcrm-review-actions">';
-                        html += '      <button class="button wcrm-edit-review" data-comment-id="' + review.comment_id + '">Edit</button>';
-                        html += '      <button class="button wcrm-delete-review" data-comment-id="' + review.comment_id + '">Delete</button>';
-                        html += '    </div>';
-                        html += '  </div>';
-                        html += '</div>';
-                    });
-                    $('#wcrm-reviews-list').html(html);
+                    $('#wcrm-reviews-list').html('<div class="wcrm-message error">' + response.data + '</div>');
                 }
-            } else {
-                $('#wcrm-reviews-list').html('<div class="wcrm-message error">' + response.data + '</div>');
-            }
-        }).fail(function() {
-            $('#wcrm-reviews-list').html('<div class="wcrm-message error">An error occurred. Please try again.</div>');
+            })
+            .fail(function() {
+                $('#wcrm-reviews-list').html('<div class="wcrm-message error">An error occurred. Please try again.</div>');
+            });
         });
     });
 
     // Edit Review Button
     $(document).on('click', '.wcrm-edit-review', function() {
         var commentId = $(this).data('comment-id');
+        var $btn = $(this);
+        var originalText = $btn.text();
+        $btn.prop('disabled', true).text('Loading...');
 
-        // Load review data
-        $.get(wcrmData.ajaxurl, {
-            action: 'wcrm_get_review',
-            security: wcrmData.nonce,
-            comment_id: commentId
-        }, function(response) {
-            if (response.success) {
-                var review = response.data;
+        // Add to request queue
+        wcrmRequestQueue.add(function() {
+            return $.get(wcrmData.ajaxurl, {
+                action: 'wcrm_get_review',
+                security: wcrmData.nonce,
+                comment_id: commentId
+            })
+            .done(function(response) {
+                if (response.success) {
+                    var review = response.data;
 
-                // Populate edit form
-                $('#edit-comment-id').val(review.comment_id);
-                $('#edit-reviewer-name').text(review.author + ' (' + review.author_email + ')');
-                $('input[name="edit_rating"][value="' + review.rating + '"]').prop('checked', true);
-                if (tinyMCE.get('wcrm-edit-review-text')) {
-                    tinyMCE.get('wcrm-edit-review-text').setContent(review.review_text);
+                    // Populate edit form
+                    $('#edit-comment-id').val(review.comment_id);
+                    $('#edit-reviewer-name').text(review.author + ' (' + review.author_email + ')');
+                    $('input[name="edit_rating"][value="' + review.rating + '"]').prop('checked', true);
+                    if (tinyMCE.get('wcrm-edit-review-text')) {
+                        tinyMCE.get('wcrm-edit-review-text').setContent(review.review_text);
+                    } else {
+                        $('#wcrm-edit-review-text').val(review.review_text);
+                    }
+
+                    // Format and set the date for datetime-local input
+                    if (review.date) {
+                        var dateObj = new Date(review.date);
+                        var year = dateObj.getFullYear();
+                        var month = String(dateObj.getMonth() + 1).padStart(2, '0');
+                        var day = String(dateObj.getDate()).padStart(2, '0');
+                        var hours = String(dateObj.getHours()).padStart(2, '0');
+                        var minutes = String(dateObj.getMinutes()).padStart(2, '0');
+                        var formattedDate = year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
+                        $('#wcrm-edit-review-date').val(formattedDate);
+                    }
+
+                    // Show modal
+                    $('#wcrm-edit-modal').fadeIn(200);
                 } else {
-                    $('#wcrm-edit-review-text').val(review.review_text);
+                    alert(response.data);
                 }
-
-                // Format and set the date for datetime-local input
-                if (review.date) {
-                    var dateObj = new Date(review.date);
-                    var year = dateObj.getFullYear();
-                    var month = String(dateObj.getMonth() + 1).padStart(2, '0');
-                    var day = String(dateObj.getDate()).padStart(2, '0');
-                    var hours = String(dateObj.getHours()).padStart(2, '0');
-                    var minutes = String(dateObj.getMinutes()).padStart(2, '0');
-                    var formattedDate = year + '-' + month + '-' + day + 'T' + hours + ':' + minutes;
-                    $('#wcrm-edit-review-date').val(formattedDate);
-                }
-
-                // Show modal
-                $('#wcrm-edit-modal').fadeIn(200);
-            } else {
-                alert(response.data);
-            }
-        }).fail(function() {
-            alert('An error occurred. Please try again.');
+            })
+            .fail(function() {
+                alert('An error occurred. Please try again.');
+            })
+            .always(function() {
+                $btn.prop('disabled', false).text(originalText);
+            });
         });
     });
 
@@ -267,38 +346,45 @@ jQuery(function($) {
 
         var $submitBtn = $(this).find('button[type="submit"]');
         var originalText = $submitBtn.text();
-        $submitBtn.prop('disabled', true).text('Updating...');
+        $submitBtn.prop('disabled', true).text('Queued...');
 
-        $.post(wcrmData.ajaxurl, formData)
-            .done(function(response) {
-                if (response.success) {
-                    // Close modal immediately
-                    $('#wcrm-edit-modal').fadeOut(200);
+        // Add to request queue
+        wcrmRequestQueue.add(function() {
+            $submitBtn.text('Updating...');
+            return $.post(wcrmData.ajaxurl, formData)
+                .done(function(response) {
+                    if (response.success) {
+                        // Close modal immediately
+                        $('#wcrm-edit-modal').fadeOut(200);
 
-                    // Show success message in reviews list
-                    $('#wcrm-reviews-list').prepend('<div class="wcrm-message success" style="margin-bottom: 15px;">' + response.data.message + '</div>');
+                        // Show success message in reviews list
+                        $('#wcrm-reviews-list').prepend('<div class="wcrm-message success" style="margin-bottom: 15px;">' + response.data.message + '</div>');
 
-                    // Reload reviews after a short delay
-                    setTimeout(function() {
-                        $('#wcrm-load-reviews').click();
-                    }, 300);
+                        // Reload reviews after a short delay
+                        setTimeout(function() {
+                            $('#wcrm-load-reviews').click();
+                        }, 300);
 
-                    // Remove success message after 3 seconds
-                    setTimeout(function() {
-                        $('.wcrm-message.success').fadeOut(function() {
-                            $(this).remove();
-                        });
-                    }, 3000);
-                } else {
-                    alert(response.data);
+                        // Remove success message after 3 seconds
+                        setTimeout(function() {
+                            $('.wcrm-message.success').fadeOut(function() {
+                                $(this).remove();
+                            });
+                        }, 3000);
+
+                        // Reset button
+                        $submitBtn.prop('disabled', false).text(originalText);
+                    } else {
+                        alert(response.data);
+                        $submitBtn.prop('disabled', false).text(originalText);
+                    }
+                })
+                .fail(function(jqXHR, textStatus, errorThrown) {
+                    console.error('Edit review error:', textStatus, errorThrown);
+                    alert('An error occurred while updating the review. Please try again.');
                     $submitBtn.prop('disabled', false).text(originalText);
-                }
-            })
-            .fail(function(jqXHR, textStatus, errorThrown) {
-                console.error('Edit review error:', textStatus, errorThrown);
-                alert('An error occurred while updating the review. Please try again.');
-                $submitBtn.prop('disabled', false).text(originalText);
-            });
+                });
+        });
     });
 
     // Delete Review Button
@@ -309,26 +395,35 @@ jQuery(function($) {
 
         var commentId = $(this).data('comment-id');
         var $reviewItem = $(this).closest('.wcrm-review-item');
+        var $btn = $(this);
+        $btn.prop('disabled', true).text('Deleting...');
 
-        $.post(wcrmData.ajaxurl, {
-            action: 'wcrm_delete_review',
-            security: wcrmData.nonce,
-            comment_id: commentId
-        }, function(response) {
-            if (response.success) {
-                $reviewItem.fadeOut(300, function() {
-                    $(this).remove();
+        // Add to request queue
+        wcrmRequestQueue.add(function() {
+            return $.post(wcrmData.ajaxurl, {
+                action: 'wcrm_delete_review',
+                security: wcrmData.nonce,
+                comment_id: commentId
+            })
+            .done(function(response) {
+                if (response.success) {
+                    $reviewItem.fadeOut(300, function() {
+                        $(this).remove();
 
-                    // Check if any reviews left
-                    if ($('.wcrm-review-item').length === 0) {
-                        $('#wcrm-reviews-list').html('<div class="wcrm-empty">No reviews found for this product.</div>');
-                    }
-                });
-            } else {
-                alert(response.data);
-            }
-        }).fail(function() {
-            alert('An error occurred. Please try again.');
+                        // Check if any reviews left
+                        if ($('.wcrm-review-item').length === 0) {
+                            $('#wcrm-reviews-list').html('<div class="wcrm-empty">No reviews found for this product.</div>');
+                        }
+                    });
+                } else {
+                    alert(response.data);
+                    $btn.prop('disabled', false).text('Delete');
+                }
+            })
+            .fail(function() {
+                alert('An error occurred. Please try again.');
+                $btn.prop('disabled', false).text('Delete');
+            });
         });
     });
 
