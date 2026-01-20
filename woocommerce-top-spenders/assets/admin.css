@@ -1,0 +1,38 @@
+/* WooCommerce Top Spenders Export - Admin Styles */
+
+/* Additional responsive styles */
+@media screen and (max-width: 782px) {
+    .wc-top-spenders-card {
+        padding: 15px !important;
+    }
+
+    .wc-top-spenders-progress-bar {
+        height: 25px !important;
+    }
+
+    #wc-top-spenders-start-export,
+    #wc-top-spenders-download {
+        width: 100%;
+        text-align: center;
+    }
+}
+
+/* Animation for progress bar */
+@keyframes progressPulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.8;
+    }
+}
+
+.wc-top-spenders-progress-fill {
+    animation: progressPulse 2s ease-in-out infinite;
+}
+
+/* Button states */
+.wc-top-spenders-wrap .button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}

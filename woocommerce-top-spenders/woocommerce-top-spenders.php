@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Top Spenders Export
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Export the top 500 customers by total revenue as a CSV file
- * Version: 1.0.0
+ * Description: Export the top 500 customers by total revenue as a CSV file with rate limiting and batch processing
+ * Version: 1.1.0
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -21,6 +21,9 @@ defined('ABSPATH') || exit;
 class WC_Top_Spenders_Export {
 
     private static $instance = null;
+    private const BATCH_SIZE = 50; // Process 50 customers per batch
+    private const RATE_LIMIT_MS = 1000; // 1 second between batches
+    private const TRANSIENT_EXPIRY = 3600; // 1 hour
 
     public static function instance() {
         if (null === self::$instance) {
@@ -33,8 +36,14 @@ class WC_Top_Spenders_Export {
         // Admin menu
         add_action('admin_menu', [$this, 'admin_menu']);
 
-        // Handle export action
-        add_action('admin_init', [$this, 'handle_export']);
+        // Enqueue scripts
+        add_action('admin_enqueue_scripts', [$this, 'enqueue_scripts']);
+
+        // AJAX handlers
+        add_action('wp_ajax_wc_top_spenders_start_export', [$this, 'ajax_start_export']);
+        add_action('wp_ajax_wc_top_spenders_process_batch', [$this, 'ajax_process_batch']);
+        add_action('wp_ajax_wc_top_spenders_download_csv', [$this, 'ajax_download_csv']);
+        add_action('wp_ajax_wc_top_spenders_cancel_export', [$this, 'ajax_cancel_export']);
     }
 
     public function admin_menu() {
@@ -49,140 +58,439 @@ class WC_Top_Spenders_Export {
         );
     }
 
-    public function settings_page() {
-        if (!current_user_can('manage_woocommerce')) {
+    public function enqueue_scripts($hook) {
+        if ('toplevel_page_wc-top-spenders' !== $hook) {
             return;
         }
 
-        ?>
-        <div class="wrap">
-            <h1>Top Spenders Export</h1>
-            <p>Export the top 500 customers by total revenue to a CSV file.</p>
+        wp_enqueue_style(
+            'wc-top-spenders-admin',
+            plugins_url('', __FILE__) . '/assets/admin.css',
+            [],
+            '1.1.0'
+        );
 
-            <div style="background: white; padding: 20px; border: 1px solid #ccc; max-width: 600px; margin-top: 20px;">
-                <h2>Export Settings</h2>
-                <p>The CSV file will include the following columns:</p>
-                <ul style="list-style: disc; margin-left: 20px;">
-                    <li>Customer Name</li>
-                    <li>Email Address</li>
-                    <li>Phone Number</li>
-                    <li>Total Spend</li>
+        wp_enqueue_script(
+            'wc-top-spenders-admin',
+            plugins_url('', __FILE__) . '/assets/admin.js',
+            ['jquery'],
+            '1.1.0',
+            true
+        );
+
+        wp_localize_script('wc-top-spenders-admin', 'wcTopSpenders', [
+            'ajaxUrl' => admin_url('admin-ajax.php'),
+            'nonce' => wp_create_nonce('wc_top_spenders_export'),
+            'batchSize' => self::BATCH_SIZE,
+            'rateLimitMs' => self::RATE_LIMIT_MS,
+            'strings' => [
+                'starting' => __('Starting export...', 'wc-top-spenders'),
+                'processing' => __('Processing batch %d of %d...', 'wc-top-spenders'),
+                'complete' => __('Export complete! Preparing download...', 'wc-top-spenders'),
+                'error' => __('An error occurred: %s', 'wc-top-spenders'),
+                'cancelled' => __('Export cancelled.', 'wc-top-spenders'),
+            ]
+        ]);
+    }
+
+    public function settings_page() {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(__('You do not have permission to access this page.', 'wc-top-spenders'));
+        }
+
+        ?>
+        <div class="wrap wc-top-spenders-wrap">
+            <h1><?php _e('Top Spenders Export', 'wc-top-spenders'); ?></h1>
+            <p><?php _e('Export the top 500 customers by total revenue to a CSV file.', 'wc-top-spenders'); ?></p>
+
+            <div class="wc-top-spenders-card">
+                <h2><?php _e('Export Settings', 'wc-top-spenders'); ?></h2>
+                <p><?php _e('The CSV file will include the following columns:', 'wc-top-spenders'); ?></p>
+                <ul class="wc-top-spenders-list">
+                    <li><?php _e('Customer Name', 'wc-top-spenders'); ?></li>
+                    <li><?php _e('Email Address', 'wc-top-spenders'); ?></li>
+                    <li><?php _e('Phone Number', 'wc-top-spenders'); ?></li>
+                    <li><?php _e('Total Spend', 'wc-top-spenders'); ?></li>
                 </ul>
 
-                <form method="post">
-                    <?php wp_nonce_field('wc_top_spenders_export', 'wc_top_spenders_nonce'); ?>
-                    <input type="hidden" name="action" value="export_top_spenders">
-                    <p>
-                        <button type="submit" class="button button-primary button-large">
-                            Export Top 500 Spenders
+                <p class="wc-top-spenders-info">
+                    <strong><?php _e('Note:', 'wc-top-spenders'); ?></strong>
+                    <?php _e('The export uses batch processing with rate limiting (1 request per second) to avoid server overload.', 'wc-top-spenders'); ?>
+                </p>
+
+                <div id="wc-top-spenders-export-container">
+                    <button type="button" id="wc-top-spenders-start-export" class="button button-primary button-large">
+                        <?php _e('Export Top 500 Spenders', 'wc-top-spenders'); ?>
+                    </button>
+
+                    <div id="wc-top-spenders-progress" style="display: none;">
+                        <div class="wc-top-spenders-progress-bar">
+                            <div class="wc-top-spenders-progress-fill" id="wc-top-spenders-progress-fill"></div>
+                        </div>
+                        <p id="wc-top-spenders-progress-text"><?php _e('Initializing...', 'wc-top-spenders'); ?></p>
+                        <button type="button" id="wc-top-spenders-cancel" class="button">
+                            <?php _e('Cancel Export', 'wc-top-spenders'); ?>
                         </button>
-                    </p>
-                </form>
+                    </div>
+
+                    <div id="wc-top-spenders-complete" style="display: none;">
+                        <p class="wc-top-spenders-success">
+                            <?php _e('Export completed successfully!', 'wc-top-spenders'); ?>
+                        </p>
+                        <button type="button" id="wc-top-spenders-download" class="button button-primary button-large">
+                            <?php _e('Download CSV File', 'wc-top-spenders'); ?>
+                        </button>
+                        <button type="button" id="wc-top-spenders-new-export" class="button">
+                            <?php _e('Start New Export', 'wc-top-spenders'); ?>
+                        </button>
+                    </div>
+
+                    <div id="wc-top-spenders-error" style="display: none;">
+                        <p class="wc-top-spenders-error"></p>
+                        <button type="button" id="wc-top-spenders-retry" class="button button-primary">
+                            <?php _e('Try Again', 'wc-top-spenders'); ?>
+                        </button>
+                    </div>
+                </div>
             </div>
 
             <?php
             // Show statistics
             $stats = $this->get_statistics();
+            if (!is_wp_error($stats)):
             ?>
-            <div style="background: #f0f0f1; padding: 20px; border: 1px solid #ccc; max-width: 600px; margin-top: 20px;">
-                <h3>Statistics</h3>
-                <p><strong>Total Customers with Orders:</strong> <?php echo number_format($stats['total_customers']); ?></p>
-                <p><strong>Total Completed Orders:</strong> <?php echo number_format($stats['total_orders']); ?></p>
-                <p><strong>Total Revenue (Completed Orders):</strong> <?php echo wc_price($stats['total_revenue']); ?></p>
+            <div class="wc-top-spenders-card wc-top-spenders-stats">
+                <h3><?php _e('Statistics', 'wc-top-spenders'); ?></h3>
+                <p><strong><?php _e('Total Customers with Orders:', 'wc-top-spenders'); ?></strong> <?php echo number_format($stats['total_customers']); ?></p>
+                <p><strong><?php _e('Total Completed Orders:', 'wc-top-spenders'); ?></strong> <?php echo number_format($stats['total_orders']); ?></p>
+                <p><strong><?php _e('Total Revenue (Completed Orders):', 'wc-top-spenders'); ?></strong> <?php echo wc_price($stats['total_revenue']); ?></p>
             </div>
+            <?php else: ?>
+            <div class="notice notice-error">
+                <p><?php echo esc_html($stats->get_error_message()); ?></p>
+            </div>
+            <?php endif; ?>
         </div>
+
+        <style>
+        .wc-top-spenders-wrap {
+            max-width: 800px;
+        }
+        .wc-top-spenders-card {
+            background: white;
+            padding: 20px;
+            border: 1px solid #ccd0d4;
+            box-shadow: 0 1px 1px rgba(0,0,0,.04);
+            margin-top: 20px;
+        }
+        .wc-top-spenders-stats {
+            background: #f0f0f1;
+        }
+        .wc-top-spenders-list {
+            list-style: disc;
+            margin-left: 20px;
+        }
+        .wc-top-spenders-info {
+            background: #e7f5fe;
+            border-left: 4px solid #00a0d2;
+            padding: 10px;
+            margin: 15px 0;
+        }
+        .wc-top-spenders-progress-bar {
+            width: 100%;
+            height: 30px;
+            background: #f0f0f1;
+            border: 1px solid #ccd0d4;
+            border-radius: 3px;
+            overflow: hidden;
+            margin: 15px 0;
+        }
+        .wc-top-spenders-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00a0d2, #0073aa);
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        #wc-top-spenders-progress-text {
+            margin: 10px 0;
+            font-weight: 600;
+        }
+        .wc-top-spenders-success {
+            color: #46b450;
+            font-weight: 600;
+            font-size: 16px;
+        }
+        .wc-top-spenders-error {
+            color: #dc3232;
+            font-weight: 600;
+        }
+        #wc-top-spenders-export-container > * {
+            margin-top: 15px;
+        }
+        </style>
         <?php
     }
 
-    public function handle_export() {
-        // Check if export action is triggered
-        if (!isset($_POST['action']) || $_POST['action'] !== 'export_top_spenders') {
-            return;
-        }
+    public function ajax_start_export() {
+        check_ajax_referer('wc_top_spenders_export', 'nonce');
 
-        // Verify nonce
-        if (!isset($_POST['wc_top_spenders_nonce']) || !wp_verify_nonce($_POST['wc_top_spenders_nonce'], 'wc_top_spenders_export')) {
-            wp_die('Security check failed');
-        }
-
-        // Check permissions
         if (!current_user_can('manage_woocommerce')) {
-            wp_die('You do not have permission to export data');
+            wp_send_json_error(['message' => __('Permission denied.', 'wc-top-spenders')]);
         }
 
-        // Get top spenders data
-        $top_spenders = $this->get_top_spenders(500);
+        try {
+            // Clear any previous export data
+            $this->clear_export_data();
 
-        // Generate CSV
-        $this->generate_csv($top_spenders);
-    }
+            // Get total customer count
+            $total_customers = $this->get_customer_count();
 
-    private function get_top_spenders($limit = 500) {
-        global $wpdb;
-
-        // Query to get customer email, total spent
-        // We'll get orders with status 'completed' or 'processing'
-        $query = "
-            SELECT
-                pm_email.meta_value as email,
-                pm_first.meta_value as first_name,
-                pm_last.meta_value as last_name,
-                pm_phone.meta_value as phone,
-                SUM(p.post_total) as total_spent
-            FROM (
-                SELECT
-                    p.ID as order_id,
-                    CAST(pm.meta_value AS DECIMAL(10,2)) as post_total
-                FROM {$wpdb->posts} p
-                INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_order_total'
-                WHERE p.post_type = 'shop_order'
-                AND p.post_status IN ('wc-completed', 'wc-processing')
-            ) p
-            INNER JOIN {$wpdb->postmeta} pm_email ON p.order_id = pm_email.post_id AND pm_email.meta_key = '_billing_email'
-            LEFT JOIN {$wpdb->postmeta} pm_first ON p.order_id = pm_first.post_id AND pm_first.meta_key = '_billing_first_name'
-            LEFT JOIN {$wpdb->postmeta} pm_last ON p.order_id = pm_last.post_id AND pm_last.meta_key = '_billing_last_name'
-            LEFT JOIN {$wpdb->postmeta} pm_phone ON p.order_id = pm_phone.post_id AND pm_phone.meta_key = '_billing_phone'
-            WHERE pm_email.meta_value IS NOT NULL
-            AND pm_email.meta_value != ''
-            GROUP BY pm_email.meta_value
-            ORDER BY total_spent DESC
-            LIMIT %d
-        ";
-
-        $results = $wpdb->get_results($wpdb->prepare($query, $limit));
-
-        // Process results to format names properly
-        $processed_results = [];
-        foreach ($results as $customer) {
-            $first_name = !empty($customer->first_name) ? $customer->first_name : '';
-            $last_name = !empty($customer->last_name) ? $customer->last_name : '';
-            $full_name = trim($first_name . ' ' . $last_name);
-
-            // If no name, use email username
-            if (empty($full_name)) {
-                $full_name = strstr($customer->email, '@', true);
+            if (is_wp_error($total_customers)) {
+                throw new Exception($total_customers->get_error_message());
             }
 
-            $processed_results[] = [
-                'name' => $full_name,
-                'email' => $customer->email,
-                'phone' => !empty($customer->phone) ? $customer->phone : 'N/A',
-                'total_spent' => floatval($customer->total_spent)
-            ];
+            if ($total_customers === 0) {
+                throw new Exception(__('No customers found with completed or processing orders.', 'wc-top-spenders'));
+            }
+
+            // Limit to 500
+            $total_to_process = min($total_customers, 500);
+            $total_batches = ceil($total_to_process / self::BATCH_SIZE);
+
+            // Store export session data
+            set_transient('wc_top_spenders_export_session', [
+                'total_customers' => $total_to_process,
+                'total_batches' => $total_batches,
+                'current_batch' => 0,
+                'started' => time()
+            ], self::TRANSIENT_EXPIRY);
+
+            wp_send_json_success([
+                'total_batches' => $total_batches,
+                'total_customers' => $total_to_process
+            ]);
+        } catch (Exception $e) {
+            wp_send_json_error(['message' => $e->getMessage()]);
+        }
+    }
+
+    public function ajax_process_batch() {
+        check_ajax_referer('wc_top_spenders_export', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => __('Permission denied.', 'wc-top-spenders')]);
         }
 
-        return $processed_results;
+        try {
+            $batch_number = isset($_POST['batch']) ? intval($_POST['batch']) : 0;
+
+            // Get session data
+            $session = get_transient('wc_top_spenders_export_session');
+            if (!$session) {
+                throw new Exception(__('Export session expired. Please start a new export.', 'wc-top-spenders'));
+            }
+
+            // Validate batch number
+            if ($batch_number < 0 || $batch_number >= $session['total_batches']) {
+                throw new Exception(__('Invalid batch number.', 'wc-top-spenders'));
+            }
+
+            // Get customer data for this batch
+            $offset = $batch_number * self::BATCH_SIZE;
+            $limit = self::BATCH_SIZE;
+
+            $customers = $this->get_top_spenders_batch($offset, $limit);
+
+            if (is_wp_error($customers)) {
+                throw new Exception($customers->get_error_message());
+            }
+
+            // Store batch data
+            $existing_data = get_transient('wc_top_spenders_export_data');
+            if (!is_array($existing_data)) {
+                $existing_data = [];
+            }
+
+            $existing_data = array_merge($existing_data, $customers);
+            set_transient('wc_top_spenders_export_data', $existing_data, self::TRANSIENT_EXPIRY);
+
+            // Update session
+            $session['current_batch'] = $batch_number + 1;
+            set_transient('wc_top_spenders_export_session', $session, self::TRANSIENT_EXPIRY);
+
+            wp_send_json_success([
+                'batch' => $batch_number,
+                'processed' => count($existing_data),
+                'total' => $session['total_customers']
+            ]);
+        } catch (Exception $e) {
+            wp_send_json_error(['message' => $e->getMessage()]);
+        }
+    }
+
+    public function ajax_download_csv() {
+        check_ajax_referer('wc_top_spenders_export', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die(__('Permission denied.', 'wc-top-spenders'));
+        }
+
+        try {
+            $data = get_transient('wc_top_spenders_export_data');
+
+            if (!is_array($data) || empty($data)) {
+                wp_die(__('No export data found. Please start a new export.', 'wc-top-spenders'));
+            }
+
+            // Generate and download CSV
+            $this->generate_csv($data);
+
+            // Clean up transients after download
+            $this->clear_export_data();
+
+        } catch (Exception $e) {
+            wp_die($e->getMessage());
+        }
+    }
+
+    public function ajax_cancel_export() {
+        check_ajax_referer('wc_top_spenders_export', 'nonce');
+
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(['message' => __('Permission denied.', 'wc-top-spenders')]);
+        }
+
+        $this->clear_export_data();
+        wp_send_json_success();
+    }
+
+    private function clear_export_data() {
+        delete_transient('wc_top_spenders_export_session');
+        delete_transient('wc_top_spenders_export_data');
+    }
+
+    private function get_customer_count() {
+        global $wpdb;
+
+        try {
+            $count = $wpdb->get_var("
+                SELECT COUNT(DISTINCT pm_email.meta_value)
+                FROM {$wpdb->posts} p
+                INNER JOIN {$wpdb->postmeta} pm_email
+                    ON p.ID = pm_email.post_id
+                    AND pm_email.meta_key = '_billing_email'
+                WHERE p.post_type = 'shop_order'
+                AND p.post_status IN ('wc-completed', 'wc-processing')
+                AND pm_email.meta_value IS NOT NULL
+                AND pm_email.meta_value != ''
+            ");
+
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error);
+            }
+
+            return intval($count);
+        } catch (Exception $e) {
+            return new WP_Error('db_exception', $e->getMessage());
+        }
+    }
+
+    private function get_top_spenders_batch($offset = 0, $limit = 50) {
+        global $wpdb;
+
+        try {
+            // Optimized query using subquery for better performance
+            $query = $wpdb->prepare("
+                SELECT
+                    customer_email as email,
+                    first_name,
+                    last_name,
+                    phone,
+                    total_spent
+                FROM (
+                    SELECT
+                        pm_email.meta_value as customer_email,
+                        MAX(pm_first.meta_value) as first_name,
+                        MAX(pm_last.meta_value) as last_name,
+                        MAX(pm_phone.meta_value) as phone,
+                        SUM(CAST(pm_total.meta_value AS DECIMAL(10,2))) as total_spent
+                    FROM {$wpdb->posts} p
+                    INNER JOIN {$wpdb->postmeta} pm_email
+                        ON p.ID = pm_email.post_id
+                        AND pm_email.meta_key = '_billing_email'
+                    INNER JOIN {$wpdb->postmeta} pm_total
+                        ON p.ID = pm_total.post_id
+                        AND pm_total.meta_key = '_order_total'
+                    LEFT JOIN {$wpdb->postmeta} pm_first
+                        ON p.ID = pm_first.post_id
+                        AND pm_first.meta_key = '_billing_first_name'
+                    LEFT JOIN {$wpdb->postmeta} pm_last
+                        ON p.ID = pm_last.post_id
+                        AND pm_last.meta_key = '_billing_last_name'
+                    LEFT JOIN {$wpdb->postmeta} pm_phone
+                        ON p.ID = pm_phone.post_id
+                        AND pm_phone.meta_key = '_billing_phone'
+                    WHERE p.post_type = 'shop_order'
+                    AND p.post_status IN ('wc-completed', 'wc-processing')
+                    AND pm_email.meta_value IS NOT NULL
+                    AND pm_email.meta_value != ''
+                    GROUP BY pm_email.meta_value
+                    ORDER BY total_spent DESC
+                    LIMIT %d OFFSET %d
+                ) as top_customers
+            ", $limit, $offset);
+
+            $results = $wpdb->get_results($query);
+
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error);
+            }
+
+            // Process results
+            $processed_results = [];
+            foreach ($results as $customer) {
+                $first_name = !empty($customer->first_name) ? sanitize_text_field($customer->first_name) : '';
+                $last_name = !empty($customer->last_name) ? sanitize_text_field($customer->last_name) : '';
+                $full_name = trim($first_name . ' ' . $last_name);
+
+                // If no name, use email username
+                if (empty($full_name)) {
+                    $email_parts = explode('@', $customer->email);
+                    $full_name = sanitize_text_field($email_parts[0]);
+                }
+
+                $processed_results[] = [
+                    'name' => $full_name,
+                    'email' => sanitize_email($customer->email),
+                    'phone' => !empty($customer->phone) ? sanitize_text_field($customer->phone) : 'N/A',
+                    'total_spent' => floatval($customer->total_spent)
+                ];
+            }
+
+            return $processed_results;
+        } catch (Exception $e) {
+            return new WP_Error('db_exception', $e->getMessage());
+        }
     }
 
     private function generate_csv($data) {
+        if (!is_array($data) || empty($data)) {
+            wp_die(__('No data to export.', 'wc-top-spenders'));
+        }
+
         // Set headers for CSV download
         header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename=top-500-spenders-' . date('Y-m-d') . '.csv');
+        header('Content-Disposition: attachment; filename=top-spenders-' . date('Y-m-d-His') . '.csv');
         header('Pragma: no-cache');
         header('Expires: 0');
+        header('Cache-Control: must-revalidate, post-check=0, pre-check=0');
 
         // Open output stream
         $output = fopen('php://output', 'w');
+
+        if ($output === false) {
+            wp_die(__('Failed to open output stream.', 'wc-top-spenders'));
+        }
 
         // Add UTF-8 BOM for Excel compatibility
         fprintf($output, chr(0xEF).chr(0xBB).chr(0xBF));
@@ -192,11 +500,15 @@ class WC_Top_Spenders_Export {
 
         // Add data rows
         foreach ($data as $row) {
+            if (!is_array($row)) {
+                continue;
+            }
+
             fputcsv($output, [
-                $row['name'],
-                $row['email'],
-                $row['phone'],
-                number_format($row['total_spent'], 2, '.', '')
+                isset($row['name']) ? $row['name'] : '',
+                isset($row['email']) ? $row['email'] : '',
+                isset($row['phone']) ? $row['phone'] : 'N/A',
+                isset($row['total_spent']) ? number_format($row['total_spent'], 2, '.', '') : '0.00'
             ]);
         }
 
@@ -207,39 +519,59 @@ class WC_Top_Spenders_Export {
     private function get_statistics() {
         global $wpdb;
 
-        // Get total customers with orders
-        $total_customers = $wpdb->get_var("
-            SELECT COUNT(DISTINCT pm_email.meta_value)
-            FROM {$wpdb->posts} p
-            INNER JOIN {$wpdb->postmeta} pm_email ON p.ID = pm_email.post_id AND pm_email.meta_key = '_billing_email'
-            WHERE p.post_type = 'shop_order'
-            AND p.post_status IN ('wc-completed', 'wc-processing')
-            AND pm_email.meta_value IS NOT NULL
-            AND pm_email.meta_value != ''
-        ");
+        try {
+            // Get total customers with orders
+            $total_customers = $wpdb->get_var("
+                SELECT COUNT(DISTINCT pm_email.meta_value)
+                FROM {$wpdb->posts} p
+                INNER JOIN {$wpdb->postmeta} pm_email
+                    ON p.ID = pm_email.post_id
+                    AND pm_email.meta_key = '_billing_email'
+                WHERE p.post_type = 'shop_order'
+                AND p.post_status IN ('wc-completed', 'wc-processing')
+                AND pm_email.meta_value IS NOT NULL
+                AND pm_email.meta_value != ''
+            ");
 
-        // Get total completed orders
-        $total_orders = $wpdb->get_var("
-            SELECT COUNT(*)
-            FROM {$wpdb->posts}
-            WHERE post_type = 'shop_order'
-            AND post_status IN ('wc-completed', 'wc-processing')
-        ");
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error);
+            }
 
-        // Get total revenue
-        $total_revenue = $wpdb->get_var("
-            SELECT SUM(CAST(pm.meta_value AS DECIMAL(10,2)))
-            FROM {$wpdb->posts} p
-            INNER JOIN {$wpdb->postmeta} pm ON p.ID = pm.post_id AND pm.meta_key = '_order_total'
-            WHERE p.post_type = 'shop_order'
-            AND p.post_status IN ('wc-completed', 'wc-processing')
-        ");
+            // Get total completed orders
+            $total_orders = $wpdb->get_var("
+                SELECT COUNT(*)
+                FROM {$wpdb->posts}
+                WHERE post_type = 'shop_order'
+                AND post_status IN ('wc-completed', 'wc-processing')
+            ");
 
-        return [
-            'total_customers' => intval($total_customers),
-            'total_orders' => intval($total_orders),
-            'total_revenue' => floatval($total_revenue)
-        ];
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error);
+            }
+
+            // Get total revenue
+            $total_revenue = $wpdb->get_var("
+                SELECT SUM(CAST(pm.meta_value AS DECIMAL(10,2)))
+                FROM {$wpdb->posts} p
+                INNER JOIN {$wpdb->postmeta} pm
+                    ON p.ID = pm.post_id
+                    AND pm.meta_key = '_order_total'
+                WHERE p.post_type = 'shop_order'
+                AND p.post_status IN ('wc-completed', 'wc-processing')
+            ");
+
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error);
+            }
+
+            return [
+                'total_customers' => intval($total_customers),
+                'total_orders' => intval($total_orders),
+                'total_revenue' => floatval($total_revenue)
+            ];
+        } catch (Exception $e) {
+            return new WP_Error('db_exception', $e->getMessage());
+        }
     }
 }
 
@@ -252,7 +584,7 @@ add_action('plugins_loaded', function() {
         add_action('admin_notices', function() {
             ?>
             <div class="notice notice-error">
-                <p><strong>WooCommerce Top Spenders Export</strong> requires WooCommerce to be installed and active.</p>
+                <p><strong><?php _e('WooCommerce Top Spenders Export', 'wc-top-spenders'); ?></strong> <?php _e('requires WooCommerce to be installed and active.', 'wc-top-spenders'); ?></p>
             </div>
             <?php
         });
