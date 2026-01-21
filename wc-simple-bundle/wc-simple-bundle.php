@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Simple Bundle
  * Plugin URI: https://example.com
- * Description: Create bundle products with automatic stock management
- * Version: 3.0.0
+ * Description: Create bundle products with automatic stock management. Bundle contents display on orders and packing slips.
+ * Version: 3.1.0
  * Author: Your Name
  * Author URI: https://example.com
  * Requires at least: 5.8
@@ -26,7 +26,7 @@ final class WC_Simple_Bundle {
     /**
      * Plugin version
      */
-    const VERSION = '3.0.0';
+    const VERSION = '3.1.0';
     
     /**
      * Single instance
@@ -86,6 +86,9 @@ final class WC_Simple_Bundle {
         // Stock management
         add_action('woocommerce_reduce_order_stock', array($this, 'reduce_order_stock'));
         add_action('woocommerce_restore_order_stock', array($this, 'restore_order_stock'));
+
+        // Add bundle contents to order items for packing slips
+        add_action('woocommerce_checkout_create_order_line_item', array($this, 'add_bundle_contents_to_order_item'), 10, 4);
     }
     
     /**
@@ -354,6 +357,46 @@ final class WC_Simple_Bundle {
                     )
                 );
             }
+        }
+    }
+
+    /**
+     * Add bundle contents to order item metadata
+     * This makes the bundled products visible on packing slips
+     */
+    public function add_bundle_contents_to_order_item($item, $cart_item_key, $values, $order) {
+        $product = $item->get_product();
+
+        if (!$product || 'bundle' !== $product->get_type()) {
+            return;
+        }
+
+        $bundle_data = $product->get_bundle_data();
+
+        if (empty($bundle_data)) {
+            return;
+        }
+
+        // Build a formatted list of bundled products
+        $bundle_contents = array();
+
+        foreach ($bundle_data as $data) {
+            $bundled_product = wc_get_product($data['product_id']);
+
+            if (!$bundled_product) {
+                continue;
+            }
+
+            $bundle_contents[] = sprintf(
+                '%s × %d',
+                $bundled_product->get_name(),
+                $data['quantity']
+            );
+        }
+
+        if (!empty($bundle_contents)) {
+            // Add as order item meta - this will show on packing slips automatically
+            $item->add_meta_data(__('Bundle Contents', 'wc-simple-bundle'), implode(', ', $bundle_contents), true);
         }
     }
 }
