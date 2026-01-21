@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Simple Bundle
  * Plugin URI: https://example.com
  * Description: Create bundle products with automatic stock management. Bundle contents display on orders and packing slips.
- * Version: 3.1.1
+ * Version: 3.1.2
  * Author: Your Name
  * Author URI: https://example.com
  * Requires at least: 5.8
@@ -26,7 +26,7 @@ final class WC_Simple_Bundle {
     /**
      * Plugin version
      */
-    const VERSION = '3.1.1';
+    const VERSION = '3.1.2';
     
     /**
      * Single instance
@@ -96,6 +96,9 @@ final class WC_Simple_Bundle {
         // Format bundle contents for display
         add_filter('woocommerce_order_item_display_meta_key', array($this, 'format_bundle_meta_key'), 10, 3);
         add_filter('woocommerce_order_item_display_meta_value', array($this, 'format_bundle_meta_value'), 10, 3);
+
+        // Display bundle contents on PDF packing slips (WP Overnight plugin)
+        add_action('wpo_wcpdf_after_item_meta', array($this, 'display_bundle_contents_on_packing_slip'), 10, 3);
     }
     
     /**
@@ -439,6 +442,49 @@ final class WC_Simple_Bundle {
             return nl2br(esc_html($display_value));
         }
         return $display_value;
+    }
+
+    /**
+     * Display bundle contents on PDF packing slips
+     * Hooks into WP Overnight's PDF Invoices & Packing Slips plugin
+     */
+    public function display_bundle_contents_on_packing_slip($template_type, $item, $order) {
+        // Only display on packing slips, not invoices
+        if ($template_type !== 'packing-slip') {
+            return;
+        }
+
+        $product = $item->get_product();
+
+        if (!$product || 'bundle' !== $product->get_type()) {
+            return;
+        }
+
+        $bundle_data = $product->get_bundle_data();
+
+        if (empty($bundle_data)) {
+            return;
+        }
+
+        // Output bundle contents with styling
+        echo '<div class="bundle-contents" style="margin-top: 5px; padding-left: 10px; font-size: 0.9em; color: #666;">';
+        echo '<strong>' . esc_html__('Bundle Contains:', 'wc-simple-bundle') . '</strong><br>';
+
+        foreach ($bundle_data as $data) {
+            $bundled_product = wc_get_product($data['product_id']);
+
+            if (!$bundled_product) {
+                continue;
+            }
+
+            printf(
+                '• %s × %d<br>',
+                esc_html($bundled_product->get_name()),
+                absint($data['quantity'])
+            );
+        }
+
+        echo '</div>';
     }
 }
 
