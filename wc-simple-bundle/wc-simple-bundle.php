@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Simple Bundle
  * Plugin URI: https://example.com
  * Description: Create bundle products with automatic stock management. Bundle contents display on orders and packing slips.
- * Version: 3.1.0
+ * Version: 3.1.1
  * Author: Your Name
  * Author URI: https://example.com
  * Requires at least: 5.8
@@ -26,7 +26,7 @@ final class WC_Simple_Bundle {
     /**
      * Plugin version
      */
-    const VERSION = '3.1.0';
+    const VERSION = '3.1.1';
     
     /**
      * Single instance
@@ -89,6 +89,13 @@ final class WC_Simple_Bundle {
 
         // Add bundle contents to order items for packing slips
         add_action('woocommerce_checkout_create_order_line_item', array($this, 'add_bundle_contents_to_order_item'), 10, 4);
+
+        // Ensure bundle contents meta is visible
+        add_filter('woocommerce_hidden_order_itemmeta', array($this, 'unhide_bundle_contents_meta'));
+
+        // Format bundle contents for display
+        add_filter('woocommerce_order_item_display_meta_key', array($this, 'format_bundle_meta_key'), 10, 3);
+        add_filter('woocommerce_order_item_display_meta_value', array($this, 'format_bundle_meta_value'), 10, 3);
     }
     
     /**
@@ -377,7 +384,7 @@ final class WC_Simple_Bundle {
             return;
         }
 
-        // Build a formatted list of bundled products
+        // Build formatted list with line breaks for better display
         $bundle_contents = array();
 
         foreach ($bundle_data as $data) {
@@ -388,16 +395,50 @@ final class WC_Simple_Bundle {
             }
 
             $bundle_contents[] = sprintf(
-                '%s × %d',
+                '  • %s × %d',
                 $bundled_product->get_name(),
                 $data['quantity']
             );
         }
 
         if (!empty($bundle_contents)) {
-            // Add as order item meta - this will show on packing slips automatically
-            $item->add_meta_data(__('Bundle Contents', 'wc-simple-bundle'), implode(', ', $bundle_contents), true);
+            // Use line breaks for better readability on packing slips
+            $formatted_contents = "\n" . implode("\n", $bundle_contents);
+            $item->add_meta_data('_bundle_contents', $formatted_contents, true);
         }
+    }
+
+    /**
+     * Ensure bundle contents metadata is visible
+     */
+    public function unhide_bundle_contents_meta($hidden_meta) {
+        // Make sure _bundle_contents is not in the hidden meta keys list
+        $key = array_search('_bundle_contents', $hidden_meta);
+        if ($key !== false) {
+            unset($hidden_meta[$key]);
+        }
+        return $hidden_meta;
+    }
+
+    /**
+     * Format bundle contents meta key for display
+     */
+    public function format_bundle_meta_key($display_key, $meta, $item) {
+        if ($meta->key === '_bundle_contents') {
+            return __('Bundle Contains', 'wc-simple-bundle');
+        }
+        return $display_key;
+    }
+
+    /**
+     * Format bundle contents meta value for display
+     */
+    public function format_bundle_meta_value($display_value, $meta, $item) {
+        if ($meta->key === '_bundle_contents') {
+            // Preserve line breaks for display
+            return nl2br(esc_html($display_value));
+        }
+        return $display_value;
     }
 }
 
