@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Simple Bundle
  * Plugin URI: https://example.com
  * Description: Create bundle products with automatic stock management. Bundle contents display on orders and packing slips.
- * Version: 3.1.2
+ * Version: 3.1.3
  * Author: Your Name
  * Author URI: https://example.com
  * Requires at least: 5.8
@@ -26,7 +26,7 @@ final class WC_Simple_Bundle {
     /**
      * Plugin version
      */
-    const VERSION = '3.1.2';
+    const VERSION = '3.1.3';
     
     /**
      * Single instance
@@ -454,9 +454,16 @@ final class WC_Simple_Bundle {
             return;
         }
 
-        $product = $item->get_product();
+        // Handle $item as array (WP Overnight plugin passes it this way)
+        $product = null;
 
-        if (!$product || 'bundle' !== $product->get_type()) {
+        if (is_array($item) && isset($item['product'])) {
+            $product = $item['product'];
+        } elseif (is_object($item) && method_exists($item, 'get_product')) {
+            $product = $item->get_product();
+        }
+
+        if (!$product || !method_exists($product, 'get_type') || 'bundle' !== $product->get_type()) {
             return;
         }
 
