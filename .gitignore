@@ -1,5 +1,7 @@
 # Build/distribution files
 *.zip
+# Allow releases folder
+!releases/*.zip
 
 # macOS
 .DS_Store
