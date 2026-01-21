@@ -1,0 +1,88 @@
+/**
+ * Admin CSS for WooCommerce Simple Bundle
+ */
+
+/* Bundle products table */
+.wcsb-bundle-products {
+    padding: 12px;
+}
+
+.wcsb-bundle-table {
+    border: 1px solid #ddd;
+    background: #fff;
+}
+
+.wcsb-bundle-table thead th {
+    background: #f9f9f9;
+    padding: 10px;
+    font-weight: 600;
+}
+
+.wcsb-bundle-table tbody td {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+    vertical-align: middle;
+}
+
+.wcsb-bundle-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.wcsb-bundle-table .sort {
+    width: 30px;
+    text-align: center;
+    cursor: move;
+}
+
+.wcsb-bundle-table .sort .dashicons {
+    color: #999;
+}
+
+.wcsb-bundle-table .product {
+    width: auto;
+}
+
+.wcsb-bundle-table .quantity {
+    width: 100px;
+}
+
+.wcsb-bundle-table .quantity input {
+    width: 60px;
+}
+
+.wcsb-bundle-table .remove {
+    width: 100px;
+    text-align: right;
+}
+
+/* Autocomplete dropdown */
+.ui-autocomplete {
+    max-height: 300px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    z-index: 999999 !important;
+}
+
+/* Product search field */
+#wcsb_product_search {
+    padding: 6px 10px;
+}
+
+/* Sortable placeholder */
+.wcsb-bundle-table .ui-sortable-placeholder {
+    visibility: visible !important;
+    background: #f9f9f9;
+    border: 1px dashed #ddd;
+}
+
+.wcsb-bundle-table .ui-sortable-helper {
+    background: #fff;
+    opacity: 0.8;
+}
+
+/* Force price fields to show for bundle products */
+#woocommerce-product-data .options_group.pricing,
+#woocommerce-product-data ._regular_price_field,
+#woocommerce-product-data ._sale_price_field {
+    display: block !important;
+}
