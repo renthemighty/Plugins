@@ -1,0 +1,12 @@
+# Build/distribution files
+*.zip
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# WordPress
+wp-config.php
