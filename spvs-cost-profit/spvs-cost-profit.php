@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 1.9.0
+ * Version: 2.0.0
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -61,6 +61,15 @@ final class SPVS_Cost_Profit {
         add_action( 'woocommerce_variation_options_pricing', array( $this, 'add_variation_cost_field' ), 10, 3 );
         add_action( 'woocommerce_save_product_variation', array( $this, 'save_variation_cost_field' ), 10, 2 );
 
+        /** Quick Edit */
+        add_action( 'woocommerce_product_quick_edit_end', array( $this, 'add_quick_edit_cost_field' ) );
+        add_action( 'woocommerce_product_quick_edit_save', array( $this, 'save_quick_edit_cost_field' ) );
+        add_action( 'manage_product_posts_custom_column', array( $this, 'add_cost_to_product_column_data' ), 10, 2 );
+
+        /** Bulk Edit */
+        add_action( 'woocommerce_product_bulk_edit_end', array( $this, 'add_bulk_edit_cost_field' ) );
+        add_action( 'woocommerce_product_bulk_edit_save', array( $this, 'save_bulk_edit_cost_field' ) );
+
         /** Profit at checkout & recalcs */
         add_action( 'woocommerce_checkout_create_order_line_item', array( $this, 'add_line_item_profit_on_checkout' ), 10, 4 );
         add_action( 'woocommerce_checkout_order_created', array( $this, 'recalculate_order_total_profit' ) );
@@ -93,6 +102,7 @@ final class SPVS_Cost_Profit {
 
         /** Profit report export */
         add_action( 'admin_post_spvs_export_profit_report', array( $this, 'export_profit_report_csv' ) );
+        add_action( 'admin_post_spvs_export_top_products', array( $this, 'export_top_products_csv' ) );
 
         /** COG Import (server-side, no AJAX) */
         add_action( 'admin_post_spvs_import_cog', array( $this, 'import_cog_costs' ) );
@@ -113,6 +123,29 @@ final class SPVS_Cost_Profit {
         if ( 'woocommerce_page_spvs-dashboard' === $hook ) {
             // Enqueue Chart.js for visualizations
             wp_enqueue_script( 'chart-js', 'https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js', array(), '3.9.1', true );
+
+            // Add print styles for PDF export via browser
+            wp_add_inline_style( 'wp-admin', '
+                @media print {
+                    .wrap > h1, .nav-tab-wrapper, form, .button, .notice, #wpadminbar, #adminmenumain, .update-nag {
+                        display: none !important;
+                    }
+                    table.widefat {
+                        border: 1px solid #000;
+                        page-break-inside: auto;
+                    }
+                    table.widefat tr {
+                        page-break-inside: avoid;
+                        page-break-after: auto;
+                    }
+                    table.widefat thead {
+                        display: table-header-group;
+                    }
+                    body {
+                        font-size: 10pt;
+                    }
+                }
+            ' );
         }
     }
 
@@ -190,6 +223,112 @@ final class SPVS_Cost_Profit {
             $value = $value !== '' ? wc_format_decimal( $value, wc_get_price_decimals() ) : '';
             if ( $value === '' ) { delete_post_meta( $variation_id, self::PRODUCT_COST_META ); }
             else { update_post_meta( $variation_id, self::PRODUCT_COST_META, $value ); }
+        }
+    }
+
+    /** --------------- Quick Edit --------------- */
+    public function add_cost_to_product_column_data( $column, $post_id ) {
+        // Add cost data to product list for Quick Edit to pick up via JavaScript
+        if ( 'name' === $column ) {
+            $cost = $this->get_product_cost_raw( $post_id );
+            echo '<div class="hidden spvs-cost-inline" data-cost="' . esc_attr( $cost ) . '"></div>';
+        }
+    }
+
+    public function add_quick_edit_cost_field() {
+        ?>
+        <br class="clear" />
+        <label class="alignleft">
+            <span class="title"><?php esc_html_e( 'Cost Price', 'spvs-cost-profit' ); ?></span>
+            <span class="input-text-wrap">
+                <input type="number" step="0.0001" min="0" name="<?php echo esc_attr( self::PRODUCT_COST_META ); ?>" class="text wc_input_price" placeholder="<?php esc_attr_e( 'Cost', 'spvs-cost-profit' ); ?>" value="">
+            </span>
+        </label>
+        <script type="text/javascript">
+        jQuery(function($) {
+            $('#the-list').on('click', '.editinline', function() {
+                var post_id = $(this).closest('tr').attr('id').replace('post-', '');
+                var cost = $('#post-' + post_id).find('.spvs-cost-inline').data('cost');
+                $('input[name="<?php echo esc_js( self::PRODUCT_COST_META ); ?>"]').val(cost || '');
+            });
+        });
+        </script>
+        <?php
+    }
+
+    public function save_quick_edit_cost_field( $product ) {
+        if ( ! $product instanceof WC_Product ) return;
+        if ( isset( $_REQUEST[ self::PRODUCT_COST_META ] ) ) {
+            $raw = wp_unslash( $_REQUEST[ self::PRODUCT_COST_META ] );
+            $value = $raw !== '' ? wc_clean( $raw ) : '';
+            $value = $value !== '' ? wc_format_decimal( $value, wc_get_price_decimals() ) : '';
+            if ( $value === '' ) { $product->delete_meta_data( self::PRODUCT_COST_META ); }
+            else { $product->update_meta_data( self::PRODUCT_COST_META, $value ); }
+        }
+    }
+
+    /** --------------- Bulk Edit --------------- */
+    public function add_bulk_edit_cost_field() {
+        ?>
+        <br class="clear" />
+        <label class="alignleft">
+            <span class="title"><?php esc_html_e( 'Cost Price', 'spvs-cost-profit' ); ?></span>
+            <span class="input-text-wrap">
+                <select name="<?php echo esc_attr( self::PRODUCT_COST_META ); ?>_change" class="change_to">
+                    <option value=""><?php esc_html_e( '— No change —', 'spvs-cost-profit' ); ?></option>
+                    <option value="set"><?php esc_html_e( 'Set to:', 'spvs-cost-profit' ); ?></option>
+                    <option value="increase"><?php esc_html_e( 'Increase by (fixed):', 'spvs-cost-profit' ); ?></option>
+                    <option value="decrease"><?php esc_html_e( 'Decrease by (fixed):', 'spvs-cost-profit' ); ?></option>
+                    <option value="increase_percent"><?php esc_html_e( 'Increase by (%):', 'spvs-cost-profit' ); ?></option>
+                    <option value="decrease_percent"><?php esc_html_e( 'Decrease by (%):', 'spvs-cost-profit' ); ?></option>
+                </select>
+            </span>
+        </label>
+        <label class="alignleft">
+            <span class="title">&nbsp;</span>
+            <span class="input-text-wrap">
+                <input type="number" step="0.0001" min="0" name="<?php echo esc_attr( self::PRODUCT_COST_META ); ?>_value" class="text wc_input_price" placeholder="<?php esc_attr_e( 'Value', 'spvs-cost-profit' ); ?>" value="">
+            </span>
+        </label>
+        <?php
+    }
+
+    public function save_bulk_edit_cost_field( $product ) {
+        if ( ! $product instanceof WC_Product ) return;
+
+        $change_type = isset( $_REQUEST[ self::PRODUCT_COST_META . '_change' ] ) ? wc_clean( wp_unslash( $_REQUEST[ self::PRODUCT_COST_META . '_change' ] ) ) : '';
+        $change_value = isset( $_REQUEST[ self::PRODUCT_COST_META . '_value' ] ) ? wc_clean( wp_unslash( $_REQUEST[ self::PRODUCT_COST_META . '_value' ] ) ) : '';
+
+        if ( empty( $change_type ) || $change_value === '' ) {
+            return;
+        }
+
+        $current_cost = (float) $this->get_product_cost_raw( $product->get_id() );
+        $new_cost = $current_cost;
+
+        switch ( $change_type ) {
+            case 'set':
+                $new_cost = (float) $change_value;
+                break;
+            case 'increase':
+                $new_cost = $current_cost + (float) $change_value;
+                break;
+            case 'decrease':
+                $new_cost = max( 0, $current_cost - (float) $change_value );
+                break;
+            case 'increase_percent':
+                $new_cost = $current_cost * ( 1 + ( (float) $change_value / 100 ) );
+                break;
+            case 'decrease_percent':
+                $new_cost = $current_cost * ( 1 - ( (float) $change_value / 100 ) );
+                $new_cost = max( 0, $new_cost );
+                break;
+        }
+
+        if ( $new_cost > 0 ) {
+            $product->update_meta_data( self::PRODUCT_COST_META, wc_format_decimal( $new_cost, wc_get_price_decimals() ) );
+        } else {
+            $product->delete_meta_data( self::PRODUCT_COST_META );
         }
     }
 
@@ -357,8 +496,12 @@ final class SPVS_Cost_Profit {
                 $product = wc_get_product( $pid ); if ( ! $product ) continue;
                 $processed++;
 
-                $qty = $product->managing_stock() ? (int) $product->get_stock_quantity() : 0;
-                if ( $product->managing_stock() ) $managed++;
+                // Only count products with stock management enabled AND stock status = 'instock'
+                $is_in_stock = $product->get_stock_status() === 'instock';
+                $is_managing_stock = $product->managing_stock();
+                $qty = ( $is_managing_stock && $is_in_stock ) ? (int) $product->get_stock_quantity() : 0;
+
+                if ( $is_managing_stock ) $managed++;
                 if ( $qty > 0 ) $qty_gt0++;
 
                 if ( $qty <= 0 ) { delete_post_meta( $pid, self::PRODUCT_COST_TOTAL_META ); delete_post_meta( $pid, self::PRODUCT_RETAIL_TOTAL_META ); continue; }
@@ -820,6 +963,120 @@ final class SPVS_Cost_Profit {
         exit;
     }
 
+    public function export_top_products_csv() {
+        if ( ! current_user_can( 'read' ) ) wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        check_admin_referer( 'spvs_export_top_products' );
+
+        global $wpdb;
+
+        $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01' );
+        $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-d' );
+        $limit = isset( $_GET['limit'] ) ? absint( $_GET['limit'] ) : 50;
+        if ( $limit < 1 || $limit > 500 ) $limit = 50;
+
+        $order_statuses = array_map( 'esc_sql', array( 'wc-completed', 'wc-processing' ) );
+        $status_list = "'" . implode( "','", $order_statuses ) . "'";
+
+        // Try HPOS first
+        $results = array();
+        $orders_table = $wpdb->prefix . 'wc_orders';
+        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
+
+        if ( $table_exists ) {
+            $query = $wpdb->prepare(
+                "SELECT
+                    oim_product.meta_value as product_id,
+                    SUM(oim_qty.meta_value) as total_qty,
+                    SUM(oim_total.meta_value) as total_revenue,
+                    SUM(oim_profit.meta_value) as total_profit
+                FROM {$wpdb->prefix}woocommerce_order_items oi
+                INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product
+                    ON oi.order_item_id = oim_product.order_item_id AND oim_product.meta_key = '_product_id'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_qty
+                    ON oi.order_item_id = oim_qty.order_item_id AND oim_qty.meta_key = '_qty'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_total
+                    ON oi.order_item_id = oim_total.order_item_id AND oim_total.meta_key = '_line_total'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                    ON oi.order_item_id = oim_profit.order_item_id AND oim_profit.meta_key = %s
+                INNER JOIN {$orders_table} o ON oi.order_id = o.id
+                WHERE o.status IN ($status_list)
+                AND o.date_created_gmt >= %s AND o.date_created_gmt <= %s
+                AND oi.order_item_type = 'line_item'
+                GROUP BY product_id ORDER BY total_profit DESC LIMIT %d",
+                self::ORDER_LINE_PROFIT_META,
+                $start_date . ' 00:00:00',
+                $end_date . ' 23:59:59',
+                $limit
+            );
+            $results = $wpdb->get_results( $query );
+        }
+
+        if ( empty( $results ) ) {
+            $query = $wpdb->prepare(
+                "SELECT
+                    oim_product.meta_value as product_id,
+                    SUM(oim_qty.meta_value) as total_qty,
+                    SUM(oim_total.meta_value) as total_revenue,
+                    SUM(oim_profit.meta_value) as total_profit
+                FROM {$wpdb->prefix}woocommerce_order_items oi
+                INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product
+                    ON oi.order_item_id = oim_product.order_item_id AND oim_product.meta_key = '_product_id'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_qty
+                    ON oi.order_item_id = oim_qty.order_item_id AND oim_qty.meta_key = '_qty'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_total
+                    ON oi.order_item_id = oim_total.order_item_id AND oim_total.meta_key = '_line_total'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                    ON oi.order_item_id = oim_profit.order_item_id AND oim_profit.meta_key = %s
+                INNER JOIN {$wpdb->posts} p ON oi.order_id = p.ID
+                WHERE p.post_type = 'shop_order' AND p.post_status IN ($status_list)
+                AND p.post_date >= %s AND p.post_date <= %s
+                AND oi.order_item_type = 'line_item'
+                GROUP BY product_id ORDER BY total_profit DESC LIMIT %d",
+                self::ORDER_LINE_PROFIT_META,
+                $start_date . ' 00:00:00',
+                $end_date . ' 23:59:59',
+                $limit
+            );
+            $results = $wpdb->get_results( $query );
+        }
+
+        $filename = 'top-products-' . date( 'Ymd-His' ) . '.csv';
+        header( 'Content-Type: text/csv; charset=utf-8' );
+        header( 'Content-Disposition: attachment; filename=' . $filename );
+
+        $out = fopen( 'php://output', 'w' );
+        fputcsv( $out, array( 'Rank', 'Product ID', 'Product Name', 'SKU', 'Qty Sold', 'Revenue', 'Profit', 'Margin %', 'Avg Profit/Unit' ) );
+
+        $rank = 1;
+        foreach ( $results as $row ) {
+            $product = wc_get_product( $row->product_id );
+            if ( ! $product ) continue;
+
+            $qty = (int) $row->total_qty;
+            $revenue = (float) $row->total_revenue;
+            $profit = (float) $row->total_profit;
+            $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
+            $avg_profit = $qty > 0 ? $profit / $qty : 0;
+
+            fputcsv( $out, array(
+                $rank,
+                $product->get_id(),
+                $product->get_name(),
+                $product->get_sku(),
+                $qty,
+                number_format( $revenue, 2, '.', '' ),
+                number_format( $profit, 2, '.', '' ),
+                number_format( $margin, 2, '.', '' ),
+                number_format( $avg_profit, 2, '.', '' ),
+            ) );
+
+            $rank++;
+        }
+
+        fclose( $out );
+        exit;
+    }
+
     /** --------------- Admin pages --------------- */
     public function register_admin_pages() {
         add_submenu_page(
@@ -844,6 +1101,7 @@ final class SPVS_Cost_Profit {
         // Tab navigation
         $tabs = array(
             'reports'   => __( 'Profit Reports', 'spvs-cost-profit' ),
+            'top-products' => __( 'Top Products', 'spvs-cost-profit' ),
             'inventory' => __( 'Inventory Value', 'spvs-cost-profit' ),
             'import'    => __( 'Import/Export', 'spvs-cost-profit' ),
         );
@@ -858,6 +1116,9 @@ final class SPVS_Cost_Profit {
 
         // Render active tab content
         switch ( $active_tab ) {
+            case 'top-products':
+                $this->render_top_products_tab();
+                break;
             case 'inventory':
                 $this->render_inventory_tab();
                 break;
@@ -904,9 +1165,15 @@ final class SPVS_Cost_Profit {
             'grouping'   => $grouping,
         ), admin_url( 'admin-post.php' ) );
 
+        // Date shortcuts
+        $this_month_start = date( 'Y-m-01' );
+        $this_month_end = date( 'Y-m-t' );
+        $last_month_start = date( 'Y-m-01', strtotime( 'first day of last month' ) );
+        $last_month_end = date( 'Y-m-t', strtotime( 'last day of last month' ) );
+
         // Filter form
         echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccc;">';
-        echo '<form method="get" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">';
+        echo '<form method="get" id="spvs-report-form" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">';
         echo '<input type="hidden" name="page" value="spvs-dashboard" />';
         echo '<input type="hidden" name="tab" value="reports" />';
 
@@ -918,14 +1185,35 @@ final class SPVS_Cost_Profit {
         echo '</select></label>';
 
         echo '<label><strong>' . esc_html__( 'Start Date:', 'spvs-cost-profit' ) . '</strong><br/>';
-        echo '<input type="date" name="start_date" value="' . esc_attr( $start_date ) . '" /></label>';
+        echo '<input type="date" name="start_date" id="spvs-start-date" value="' . esc_attr( $start_date ) . '" /></label>';
 
         echo '<label><strong>' . esc_html__( 'End Date:', 'spvs-cost-profit' ) . '</strong><br/>';
-        echo '<input type="date" name="end_date" value="' . esc_attr( $end_date ) . '" /></label>';
+        echo '<input type="date" name="end_date" id="spvs-end-date" value="' . esc_attr( $end_date ) . '" /></label>';
 
         echo '<button class="button button-primary">' . esc_html__( 'Update Report', 'spvs-cost-profit' ) . '</button>';
         echo '<a class="button" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '<button type="button" class="button" onclick="window.print();">' . esc_html__( 'Print / Save as PDF', 'spvs-cost-profit' ) . '</button>';
         echo '</form>';
+
+        // Date shortcuts
+        echo '<div style="margin-top: 10px; display: flex; gap: 8px;">';
+        echo '<strong style="padding: 6px 0;">' . esc_html__( 'Quick Select:', 'spvs-cost-profit' ) . '</strong>';
+        echo '<button type="button" class="button spvs-date-shortcut" data-start="' . esc_attr( $this_month_start ) . '" data-end="' . esc_attr( $this_month_end ) . '">' . esc_html__( 'This Month', 'spvs-cost-profit' ) . '</button>';
+        echo '<button type="button" class="button spvs-date-shortcut" data-start="' . esc_attr( $last_month_start ) . '" data-end="' . esc_attr( $last_month_end ) . '">' . esc_html__( 'Last Month', 'spvs-cost-profit' ) . '</button>';
+        echo '</div>';
+
+        echo '<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            document.querySelectorAll(".spvs-date-shortcut").forEach(function(btn) {
+                btn.addEventListener("click", function() {
+                    document.getElementById("spvs-start-date").value = this.dataset.start;
+                    document.getElementById("spvs-end-date").value = this.dataset.end;
+                    document.getElementById("spvs-report-form").submit();
+                });
+            });
+        });
+        </script>';
+
         echo '</div>';
 
         if ( empty( $report_data ) ) {
@@ -1095,6 +1383,208 @@ final class SPVS_Cost_Profit {
         });
         </script>
         <?php
+    }
+
+    private function render_top_products_tab() {
+        global $wpdb;
+
+        // Get date range
+        $start_date = isset( $_GET['start_date'] ) ? sanitize_text_field( $_GET['start_date'] ) : date( 'Y-m-01' );
+        $end_date = isset( $_GET['end_date'] ) ? sanitize_text_field( $_GET['end_date'] ) : date( 'Y-m-d' );
+        $limit = isset( $_GET['limit'] ) ? absint( $_GET['limit'] ) : 50;
+        if ( $limit < 1 || $limit > 500 ) $limit = 50;
+
+        // Date shortcuts
+        $this_month_start = date( 'Y-m-01' );
+        $this_month_end = date( 'Y-m-t' );
+        $last_month_start = date( 'Y-m-01', strtotime( 'first day of last month' ) );
+        $last_month_end = date( 'Y-m-t', strtotime( 'last day of last month' ) );
+
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; border: 1px solid #ccc;">';
+        echo '<form method="get" id="spvs-top-products-form" style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">';
+        echo '<input type="hidden" name="page" value="spvs-dashboard" />';
+        echo '<input type="hidden" name="tab" value="top-products" />';
+
+        echo '<label><strong>' . esc_html__( 'Start Date:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<input type="date" name="start_date" id="spvs-top-start-date" value="' . esc_attr( $start_date ) . '" /></label>';
+
+        echo '<label><strong>' . esc_html__( 'End Date:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<input type="date" name="end_date" id="spvs-top-end-date" value="' . esc_attr( $end_date ) . '" /></label>';
+
+        echo '<label><strong>' . esc_html__( 'Show Top:', 'spvs-cost-profit' ) . '</strong><br/>';
+        echo '<select name="limit">';
+        foreach ( array( 10, 25, 50, 100, 250, 500 ) as $num ) {
+            echo '<option value="' . $num . '"' . selected( $limit, $num, false ) . '>' . $num . '</option>';
+        }
+        echo '</select></label>';
+
+        echo '<button class="button button-primary">' . esc_html__( 'Update', 'spvs-cost-profit' ) . '</button>';
+
+        // Export buttons
+        $export_url = add_query_arg( array(
+            'action'     => 'spvs_export_top_products',
+            '_wpnonce'   => wp_create_nonce( 'spvs_export_top_products' ),
+            'start_date' => $start_date,
+            'end_date'   => $end_date,
+            'limit'      => $limit,
+        ), admin_url( 'admin-post.php' ) );
+        echo '<a class="button" href="' . esc_url( $export_url ) . '">' . esc_html__( 'Export CSV', 'spvs-cost-profit' ) . '</a>';
+        echo '<button type="button" class="button" onclick="window.print();">' . esc_html__( 'Print / Save as PDF', 'spvs-cost-profit' ) . '</button>';
+
+        echo '</form>';
+
+        // Date shortcuts
+        echo '<div style="margin-top: 10px; display: flex; gap: 8px;">';
+        echo '<strong style="padding: 6px 0;">' . esc_html__( 'Quick Select:', 'spvs-cost-profit' ) . '</strong>';
+        echo '<button type="button" class="button spvs-top-date-shortcut" data-start="' . esc_attr( $this_month_start ) . '" data-end="' . esc_attr( $this_month_end ) . '">' . esc_html__( 'This Month', 'spvs-cost-profit' ) . '</button>';
+        echo '<button type="button" class="button spvs-top-date-shortcut" data-start="' . esc_attr( $last_month_start ) . '" data-end="' . esc_attr( $last_month_end ) . '">' . esc_html__( 'Last Month', 'spvs-cost-profit' ) . '</button>';
+        echo '</div>';
+
+        echo '<script>
+        document.addEventListener("DOMContentLoaded", function() {
+            document.querySelectorAll(".spvs-top-date-shortcut").forEach(function(btn) {
+                btn.addEventListener("click", function() {
+                    document.getElementById("spvs-top-start-date").value = this.dataset.start;
+                    document.getElementById("spvs-top-end-date").value = this.dataset.end;
+                    document.getElementById("spvs-top-products-form").submit();
+                });
+            });
+        });
+        </script>';
+
+        echo '</div>';
+
+        // Get top products data
+        $order_statuses = array_map( 'esc_sql', array( 'wc-completed', 'wc-processing' ) );
+        $status_list = "'" . implode( "','", $order_statuses ) . "'";
+
+        // Try HPOS first, fall back to legacy
+        $results = array();
+        $orders_table = $wpdb->prefix . 'wc_orders';
+        $table_exists = $wpdb->get_var( "SHOW TABLES LIKE '$orders_table'" );
+
+        if ( $table_exists ) {
+            // HPOS query
+            $query = $wpdb->prepare(
+                "SELECT
+                    oim_product.meta_value as product_id,
+                    SUM(oim_qty.meta_value) as total_qty,
+                    SUM(oim_total.meta_value) as total_revenue,
+                    SUM(oim_profit.meta_value) as total_profit
+                FROM {$wpdb->prefix}woocommerce_order_items oi
+                INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product
+                    ON oi.order_item_id = oim_product.order_item_id
+                    AND oim_product.meta_key = '_product_id'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_qty
+                    ON oi.order_item_id = oim_qty.order_item_id
+                    AND oim_qty.meta_key = '_qty'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_total
+                    ON oi.order_item_id = oim_total.order_item_id
+                    AND oim_total.meta_key = '_line_total'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                    ON oi.order_item_id = oim_profit.order_item_id
+                    AND oim_profit.meta_key = %s
+                INNER JOIN {$orders_table} o ON oi.order_id = o.id
+                WHERE o.status IN ($status_list)
+                AND o.date_created_gmt >= %s
+                AND o.date_created_gmt <= %s
+                AND oi.order_item_type = 'line_item'
+                GROUP BY product_id
+                ORDER BY total_profit DESC
+                LIMIT %d",
+                self::ORDER_LINE_PROFIT_META,
+                $start_date . ' 00:00:00',
+                $end_date . ' 23:59:59',
+                $limit
+            );
+            $results = $wpdb->get_results( $query );
+        }
+
+        // Fallback to legacy if HPOS query failed or no results
+        if ( empty( $results ) ) {
+            $query = $wpdb->prepare(
+                "SELECT
+                    oim_product.meta_value as product_id,
+                    SUM(oim_qty.meta_value) as total_qty,
+                    SUM(oim_total.meta_value) as total_revenue,
+                    SUM(oim_profit.meta_value) as total_profit
+                FROM {$wpdb->prefix}woocommerce_order_items oi
+                INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product
+                    ON oi.order_item_id = oim_product.order_item_id
+                    AND oim_product.meta_key = '_product_id'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_qty
+                    ON oi.order_item_id = oim_qty.order_item_id
+                    AND oim_qty.meta_key = '_qty'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_total
+                    ON oi.order_item_id = oim_total.order_item_id
+                    AND oim_total.meta_key = '_line_total'
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                    ON oi.order_item_id = oim_profit.order_item_id
+                    AND oim_profit.meta_key = %s
+                INNER JOIN {$wpdb->posts} p ON oi.order_id = p.ID
+                WHERE p.post_type = 'shop_order'
+                AND p.post_status IN ($status_list)
+                AND p.post_date >= %s
+                AND p.post_date <= %s
+                AND oi.order_item_type = 'line_item'
+                GROUP BY product_id
+                ORDER BY total_profit DESC
+                LIMIT %d",
+                self::ORDER_LINE_PROFIT_META,
+                $start_date . ' 00:00:00',
+                $end_date . ' 23:59:59',
+                $limit
+            );
+            $results = $wpdb->get_results( $query );
+        }
+
+        if ( empty( $results ) ) {
+            echo '<div class="notice notice-warning"><p>' . esc_html__( 'No product data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
+            return;
+        }
+
+        // Display results
+        echo '<div style="background: #fff; padding: 20px; margin: 20px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); overflow-x: auto;">';
+        echo '<h3>' . esc_html( sprintf( __( 'Top %d Products by Profit', 'spvs-cost-profit' ), count( $results ) ) ) . '</h3>';
+        echo '<table class="widefat striped">';
+        echo '<thead><tr>';
+        echo '<th style="width: 50px;">' . esc_html__( 'Rank', 'spvs-cost-profit' ) . '</th>';
+        echo '<th>' . esc_html__( 'Product', 'spvs-cost-profit' ) . '</th>';
+        echo '<th>' . esc_html__( 'SKU', 'spvs-cost-profit' ) . '</th>';
+        echo '<th style="text-align: right;">' . esc_html__( 'Qty Sold', 'spvs-cost-profit' ) . '</th>';
+        echo '<th style="text-align: right;">' . esc_html__( 'Revenue', 'spvs-cost-profit' ) . '</th>';
+        echo '<th style="text-align: right;">' . esc_html__( 'Profit', 'spvs-cost-profit' ) . '</th>';
+        echo '<th style="text-align: right;">' . esc_html__( 'Margin %', 'spvs-cost-profit' ) . '</th>';
+        echo '<th style="text-align: right;">' . esc_html__( 'Avg Profit/Unit', 'spvs-cost-profit' ) . '</th>';
+        echo '</tr></thead><tbody>';
+
+        $rank = 1;
+        foreach ( $results as $row ) {
+            $product = wc_get_product( $row->product_id );
+            if ( ! $product ) continue;
+
+            $qty = (int) $row->total_qty;
+            $revenue = (float) $row->total_revenue;
+            $profit = (float) $row->total_profit;
+            $margin = $revenue > 0 ? ( $profit / $revenue ) * 100 : 0;
+            $avg_profit = $qty > 0 ? $profit / $qty : 0;
+
+            echo '<tr>';
+            echo '<td style="text-align: center;"><strong>' . $rank . '</strong></td>';
+            echo '<td><a href="' . esc_url( get_edit_post_link( $product->get_id() ) ) . '" target="_blank">' . esc_html( $product->get_name() ) . '</a></td>';
+            echo '<td>' . esc_html( $product->get_sku() ) . '</td>';
+            echo '<td style="text-align: right;">' . esc_html( $qty ) . '</td>';
+            echo '<td style="text-align: right;">' . wp_kses_post( wc_price( $revenue ) ) . '</td>';
+            echo '<td style="text-align: right;"><strong>' . wp_kses_post( wc_price( $profit ) ) . '</strong></td>';
+            echo '<td style="text-align: right;">' . number_format( $margin, 2 ) . '%</td>';
+            echo '<td style="text-align: right;">' . wp_kses_post( wc_price( $avg_profit ) ) . '</td>';
+            echo '</tr>';
+
+            $rank++;
+        }
+
+        echo '</tbody></table>';
+        echo '</div>';
     }
 
     private function render_inventory_tab() {
