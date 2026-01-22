@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 3.0.2
+ * Version: 3.0.3
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -33,7 +33,7 @@ final class SPVS_Cost_Profit {
     const IMPORT_MISSES_TRANSIENT   = 'spvs_cost_import_misses';
 
     // Data integrity & audit
-    const DB_VERSION                = '3.0.2';
+    const DB_VERSION                = '3.0.3';
     const BACKUP_TRANSIENT_PREFIX   = 'spvs_backup_';
     const INTEGRITY_CHECK_OPTION    = 'spvs_last_integrity_check';
     const AUDIT_LOG_RETENTION_DAYS  = 90; // Keep audit logs for 90 days
@@ -227,6 +227,10 @@ final class SPVS_Cost_Profit {
 
         /** Bulk historical profit recalculation */
         add_action( 'admin_post_spvs_recalc_historical_profit', array( $this, 'recalculate_historical_profit' ) );
+
+        // AJAX actions for batch processing
+        add_action( 'wp_ajax_spvs_get_recalc_count', array( $this, 'ajax_get_recalc_count' ) );
+        add_action( 'wp_ajax_spvs_recalc_batch', array( $this, 'ajax_recalc_batch' ) );
 
         /** Daily cron for inventory totals */
         add_action( 'init', array( $this, 'maybe_schedule_daily_cron' ) );
@@ -1424,7 +1428,34 @@ final class SPVS_Cost_Profit {
         echo '</div>';
 
         if ( empty( $report_data ) ) {
-            echo '<div class="notice notice-warning"><p>' . esc_html__( 'No profit data found for the selected date range.', 'spvs-cost-profit' ) . '</p></div>';
+            echo '<div class="notice notice-warning"><p>';
+            echo '<strong>' . esc_html__( 'No data found for the selected date range.', 'spvs-cost-profit' ) . '</strong><br>';
+            echo esc_html( sprintf( __( 'Date range: %s to %s', 'spvs-cost-profit' ), $start_date, $end_date ) ) . '<br><br>';
+            echo esc_html__( 'This could mean:', 'spvs-cost-profit' ) . '<br>';
+            echo '• ' . esc_html__( 'No orders exist in this date range', 'spvs-cost-profit' ) . '<br>';
+            echo '• ' . esc_html__( 'The date range is in the future', 'spvs-cost-profit' ) . '<br>';
+            echo '• ' . esc_html__( 'Orders are in a different status (only completed/processing orders are shown)', 'spvs-cost-profit' ) . '<br>';
+            echo '</p></div>';
+
+            // Show sample of recent orders to help user understand date range
+            global $wpdb;
+            $sample_orders = $wpdb->get_results( "
+                SELECT DATE(date_created_gmt) as order_date, COUNT(*) as count
+                FROM {$wpdb->prefix}wc_orders
+                WHERE status IN ('wc-completed', 'wc-processing')
+                GROUP BY order_date
+                ORDER BY order_date DESC
+                LIMIT 5
+            " );
+
+            if ( ! empty( $sample_orders ) ) {
+                echo '<div class="notice notice-info"><p>';
+                echo '<strong>' . esc_html__( 'Recent order dates in your system:', 'spvs-cost-profit' ) . '</strong><br>';
+                foreach ( $sample_orders as $sample ) {
+                    echo esc_html( date_i18n( 'F j, Y', strtotime( $sample->order_date ) ) ) . ' (' . esc_html( $sample->count ) . ' ' . esc_html__( 'orders', 'spvs-cost-profit' ) . ')<br>';
+                }
+                echo '</p></div>';
+            }
             return;
         }
 
@@ -1547,10 +1578,13 @@ final class SPVS_Cost_Profit {
         }
 
         // Chart.js script
+        $currency_symbol = html_entity_decode( get_woocommerce_currency_symbol(), ENT_QUOTES, 'UTF-8' );
         ?>
         <script>
         document.addEventListener('DOMContentLoaded', function() {
             var ctx = document.getElementById('spvs-profit-chart');
+            var currencySymbol = <?php echo wp_json_encode( $currency_symbol ); ?>;
+
             if (ctx && typeof Chart !== 'undefined') {
                 new Chart(ctx, {
                     type: 'bar',
@@ -1590,6 +1624,18 @@ final class SPVS_Cost_Profit {
                             title: {
                                 display: true,
                                 text: '<?php echo esc_js( sprintf( __( '%s Profit Report', 'spvs-cost-profit' ), ucfirst( $grouping ) ) ); ?>'
+                            },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        var label = context.dataset.label || '';
+                                        if (label) {
+                                            label += ': ';
+                                        }
+                                        label += currencySymbol + context.parsed.y.toFixed(2);
+                                        return label;
+                                    }
+                                }
                             }
                         },
                         scales: {
@@ -1599,7 +1645,7 @@ final class SPVS_Cost_Profit {
                                 position: 'left',
                                 ticks: {
                                     callback: function(value) {
-                                        return '<?php echo get_woocommerce_currency_symbol(); ?>' + value.toFixed(2);
+                                        return currencySymbol + value.toFixed(2);
                                     }
                                 }
                             }
@@ -2129,9 +2175,131 @@ final class SPVS_Cost_Profit {
         echo '<p style="margin-top: 20px;">';
         echo '<a href="' . esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health', 'action' => 'run_integrity_check' ), admin_url( 'admin.php' ) ) ) . '" class="button button-primary">' . esc_html__( 'Run Full Integrity Check', 'spvs-cost-profit' ) . '</a>';
         echo ' <a href="' . esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health', 'action' => 'fix_missing_profit' ), admin_url( 'admin.php' ) ) ) . '" class="button">' . esc_html__( 'Fix Missing Profit Data', 'spvs-cost-profit' ) . '</a>';
-        echo ' <a href="' . esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=spvs_recalc_historical_profit' ), 'spvs_recalc_profit' ) ) . '" class="button" onclick="return confirm(\'' . esc_js( __( 'This will recalculate profit for ALL historical orders. This may take a few moments. Continue?', 'spvs-cost-profit' ) ) . '\');">' . esc_html__( 'Recalculate Historical Profit', 'spvs-cost-profit' ) . '</a>';
+        echo ' <button type="button" class="button" id="spvs-recalc-profit-btn">' . esc_html__( 'Recalculate Historical Profit', 'spvs-cost-profit' ) . '</button>';
         echo ' <a href="' . esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health', 'action' => 'cleanup_audit' ), admin_url( 'admin.php' ) ) ) . '" class="button">' . esc_html__( 'Cleanup Old Audit Logs', 'spvs-cost-profit' ) . '</a>';
         echo '</p>';
+
+        // Progress bar for historical profit recalculation
+        echo '<div id="spvs-recalc-progress" style="display: none; margin-top: 20px; padding: 15px; background: #f0f0f1; border: 1px solid #ccc; border-radius: 4px;">';
+        echo '<div style="margin-bottom: 10px;"><strong>' . esc_html__( 'Recalculating Historical Profit...', 'spvs-cost-profit' ) . '</strong></div>';
+        echo '<div style="background: #fff; border: 1px solid #ddd; height: 30px; border-radius: 3px; overflow: hidden; position: relative;">';
+        echo '<div id="spvs-recalc-progress-bar" style="height: 100%; background: linear-gradient(to right, #00a32a, #00d084); width: 0%; transition: width 0.3s;"></div>';
+        echo '<div id="spvs-recalc-progress-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; color: #333;">0%</div>';
+        echo '</div>';
+        echo '<div id="spvs-recalc-status" style="margin-top: 10px; font-size: 13px; color: #666;"></div>';
+        echo '</div>';
+
+        // JavaScript for batch processing
+        ?>
+        <script>
+        (function($) {
+            var processing = false;
+            var nonce = '<?php echo wp_create_nonce( 'spvs_recalc_profit' ); ?>';
+
+            $('#spvs-recalc-profit-btn').on('click', function() {
+                if (processing) return;
+
+                if (!confirm('<?php echo esc_js( __( 'This will recalculate profit for ALL historical orders. This process may take several minutes depending on the number of orders. Continue?', 'spvs-cost-profit' ) ); ?>')) {
+                    return;
+                }
+
+                processing = true;
+                $(this).prop('disabled', true).text('<?php echo esc_js( __( 'Processing...', 'spvs-cost-profit' ) ); ?>');
+                $('#spvs-recalc-progress').show();
+                $('#spvs-recalc-status').text('<?php echo esc_js( __( 'Initializing...', 'spvs-cost-profit' ) ); ?>');
+
+                // Get total count first
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'spvs_get_recalc_count',
+                        nonce: nonce
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var total = response.data.total;
+                            var productsWithCosts = response.data.products_with_costs;
+
+                            if (productsWithCosts === 0) {
+                                alert('<?php echo esc_js( __( 'Warning: No products have cost data. Please import costs first.', 'spvs-cost-profit' ) ); ?>');
+                                resetButton();
+                                return;
+                            }
+
+                            $('#spvs-recalc-status').html('<?php echo esc_js( __( 'Processing {total} order items...', 'spvs-cost-profit' ) ); ?>'.replace('{total}', total.toLocaleString()));
+                            processBatch(0, total);
+                        } else {
+                            alert('<?php echo esc_js( __( 'Error: Could not get count.', 'spvs-cost-profit' ) ); ?>');
+                            resetButton();
+                        }
+                    },
+                    error: function() {
+                        alert('<?php echo esc_js( __( 'AJAX error occurred.', 'spvs-cost-profit' ) ); ?>');
+                        resetButton();
+                    }
+                });
+            });
+
+            function processBatch(offset, total) {
+                var batchSize = 100;
+                var processed = offset;
+
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'spvs_recalc_batch',
+                        nonce: nonce,
+                        offset: offset
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            processed += response.data.processed;
+                            var percentage = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 100;
+
+                            $('#spvs-recalc-progress-bar').css('width', percentage + '%');
+                            $('#spvs-recalc-progress-text').text(percentage + '%');
+                            $('#spvs-recalc-status').html('<?php echo esc_js( __( 'Processed {processed} of {total} items ({orders} orders updated)...', 'spvs-cost-profit' ) ); ?>'
+                                .replace('{processed}', processed.toLocaleString())
+                                .replace('{total}', total.toLocaleString())
+                                .replace('{orders}', response.data.orders_updated.toLocaleString())
+                            );
+
+                            if (processed < total) {
+                                // Continue processing
+                                setTimeout(function() {
+                                    processBatch(offset + batchSize, total);
+                                }, 500); // Small delay between batches
+                            } else {
+                                // Complete
+                                $('#spvs-recalc-status').html('<span style="color: #00a32a; font-weight: bold;">✓ <?php echo esc_js( __( 'Complete! Processed {processed} items.', 'spvs-cost-profit' ) ); ?></span>'
+                                    .replace('{processed}', processed.toLocaleString())
+                                );
+                                setTimeout(function() {
+                                    location.reload();
+                                }, 2000);
+                            }
+                        } else {
+                            alert('<?php echo esc_js( __( 'Error processing batch.', 'spvs-cost-profit' ) ); ?>');
+                            resetButton();
+                        }
+                    },
+                    error: function() {
+                        alert('<?php echo esc_js( __( 'AJAX error during batch processing.', 'spvs-cost-profit' ) ); ?>');
+                        resetButton();
+                    }
+                });
+            }
+
+            function resetButton() {
+                processing = false;
+                $('#spvs-recalc-profit-btn').prop('disabled', false).text('<?php echo esc_js( __( 'Recalculate Historical Profit', 'spvs-cost-profit' ) ); ?>');
+                $('#spvs-recalc-progress').hide();
+            }
+        })(jQuery);
+        </script>
+        <?php
 
         // Handle actions
         if ( isset( $_GET['action'] ) && current_user_can( 'manage_woocommerce' ) ) {
@@ -2385,6 +2553,149 @@ final class SPVS_Cost_Profit {
             'spvs_msg' => rawurlencode( $msg )
         ), admin_url( 'admin.php' ) ) );
         exit;
+    }
+
+    /**
+     * AJAX: Get total count of order items for recalculation
+     */
+    public function ajax_get_recalc_count() {
+        check_ajax_referer( 'spvs_recalc_profit', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'spvs-cost-profit' ) ) );
+        }
+
+        global $wpdb;
+
+        // Get total count of order items
+        $total_items = $wpdb->get_var( "
+            SELECT COUNT(*)
+            FROM {$wpdb->prefix}woocommerce_order_items oi
+            WHERE oi.order_item_type = 'line_item'
+        " );
+
+        // Get products with costs
+        $products_with_costs = $wpdb->get_var( $wpdb->prepare( "
+            SELECT COUNT(DISTINCT pm.post_id)
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = %s
+            AND pm.meta_value != ''
+            AND pm.meta_value != '0'
+            AND p.post_type IN ('product', 'product_variation')
+        ", self::PRODUCT_COST_META ) );
+
+        wp_send_json_success( array(
+            'total' => (int) $total_items,
+            'products_with_costs' => (int) $products_with_costs,
+        ) );
+    }
+
+    /**
+     * AJAX: Process a batch of order items for profit recalculation
+     */
+    public function ajax_recalc_batch() {
+        check_ajax_referer( 'spvs_recalc_profit', 'nonce' );
+
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_send_json_error( array( 'message' => __( 'Insufficient permissions.', 'spvs-cost-profit' ) ) );
+        }
+
+        global $wpdb;
+
+        $offset = isset( $_POST['offset'] ) ? absint( $_POST['offset'] ) : 0;
+        $batch_size = 100; // Process 100 items at a time
+
+        // Step 1: Add unit costs to order items (batch)
+        $step1 = $wpdb->query( $wpdb->prepare( "
+            INSERT INTO {$wpdb->prefix}woocommerce_order_itemmeta (order_item_id, meta_key, meta_value)
+            SELECT oi.order_item_id, '_spvs_unit_cost', COALESCE(pm.meta_value, '0')
+            FROM {$wpdb->prefix}woocommerce_order_items oi
+            INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product
+                ON oi.order_item_id = oim_product.order_item_id
+                AND oim_product.meta_key = '_product_id'
+            LEFT JOIN {$wpdb->postmeta} pm
+                ON oim_product.meta_value = pm.post_id
+                AND pm.meta_key = '_spvs_cost_price'
+            WHERE oi.order_item_type = 'line_item'
+            LIMIT %d OFFSET %d
+            ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+        ", $batch_size, $offset ) );
+
+        // Step 2: Calculate line profit (batch)
+        $wpdb->query( $wpdb->prepare( "
+            INSERT INTO {$wpdb->prefix}woocommerce_order_itemmeta (order_item_id, meta_key, meta_value)
+            SELECT oi.order_item_id, '_spvs_line_profit',
+                ROUND(COALESCE(oim_total.meta_value, 0) -
+                      (COALESCE(oim_cost.meta_value, 0) * COALESCE(oim_qty.meta_value, 0)), 2)
+            FROM {$wpdb->prefix}woocommerce_order_items oi
+            LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_total
+                ON oi.order_item_id = oim_total.order_item_id
+                AND oim_total.meta_key = '_line_total'
+            LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_cost
+                ON oi.order_item_id = oim_cost.order_item_id
+                AND oim_cost.meta_key = '_spvs_unit_cost'
+            LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_qty
+                ON oi.order_item_id = oim_qty.order_item_id
+                AND oim_qty.meta_key = '_qty'
+            WHERE oi.order_item_type = 'line_item'
+            LIMIT %d OFFSET %d
+            ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+        ", $batch_size, $offset ) );
+
+        // Get affected order IDs from this batch
+        $order_ids = $wpdb->get_col( $wpdb->prepare( "
+            SELECT DISTINCT oi.order_id
+            FROM {$wpdb->prefix}woocommerce_order_items oi
+            WHERE oi.order_item_type = 'line_item'
+            LIMIT %d OFFSET %d
+        ", $batch_size, $offset ) );
+
+        // Step 3: Update order totals for affected orders
+        if ( ! empty( $order_ids ) ) {
+            $order_ids_list = implode( ',', array_map( 'absint', $order_ids ) );
+
+            // Check if HPOS is enabled
+            $orders_table = $wpdb->prefix . 'wc_orders';
+            $hpos_enabled = $wpdb->get_var( "SHOW TABLES LIKE '{$orders_table}'" ) === $orders_table;
+
+            if ( $hpos_enabled ) {
+                $wpdb->query( "
+                    INSERT INTO {$wpdb->prefix}wc_orders_meta (order_id, meta_key, meta_value)
+                    SELECT oi.order_id, '_spvs_total_profit',
+                        ROUND(SUM(COALESCE(oim_profit.meta_value, 0)), 2)
+                    FROM {$wpdb->prefix}woocommerce_order_items oi
+                    LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                        ON oi.order_item_id = oim_profit.order_item_id
+                        AND oim_profit.meta_key = '_spvs_line_profit'
+                    WHERE oi.order_item_type = 'line_item'
+                    AND oi.order_id IN ({$order_ids_list})
+                    GROUP BY oi.order_id
+                    ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+                " );
+            } else {
+                $wpdb->query( "
+                    INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+                    SELECT oi.order_id, '_spvs_total_profit',
+                        ROUND(SUM(COALESCE(oim_profit.meta_value, 0)), 2)
+                    FROM {$wpdb->prefix}woocommerce_order_items oi
+                    LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                        ON oi.order_item_id = oim_profit.order_item_id
+                        AND oim_profit.meta_key = '_spvs_line_profit'
+                    WHERE oi.order_item_type = 'line_item'
+                    AND oi.order_id IN ({$order_ids_list})
+                    GROUP BY oi.order_id
+                    ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+                " );
+            }
+        }
+
+        $processed = $step1 !== false ? $step1 : 0;
+
+        wp_send_json_success( array(
+            'processed' => $processed,
+            'orders_updated' => count( $order_ids ),
+        ) );
     }
 
     public function download_missing_cost_csv() {
