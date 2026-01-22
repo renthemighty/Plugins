@@ -2192,18 +2192,36 @@ final class SPVS_Cost_Profit {
         // JavaScript for batch processing
         ?>
         <script>
+        console.log('SPVS: Recalc script loaded');
+        console.log('SPVS: jQuery available?', typeof jQuery !== 'undefined');
+        console.log('SPVS: ajaxurl=', typeof ajaxurl !== 'undefined' ? ajaxurl : 'UNDEFINED');
+
         (function($) {
+            if (typeof $ === 'undefined') {
+                console.error('SPVS: jQuery not loaded!');
+                return;
+            }
+
             var processing = false;
             var nonce = '<?php echo wp_create_nonce( 'spvs_recalc_profit' ); ?>';
 
+            console.log('SPVS: Button selector check', $('#spvs-recalc-profit-btn').length);
+
             $('#spvs-recalc-profit-btn').on('click', function() {
-                if (processing) return;
+                console.log('SPVS: Button clicked!');
+
+                if (processing) {
+                    console.log('SPVS: Already processing, returning');
+                    return;
+                }
 
                 if (!confirm('<?php echo esc_js( __( 'This will recalculate profit for ALL historical orders. This process may take several minutes depending on the number of orders. Continue?', 'spvs-cost-profit' ) ); ?>')) {
+                    console.log('SPVS: User canceled');
                     return;
                 }
 
                 processing = true;
+                console.log('SPVS: Starting recalculation');
                 $(this).prop('disabled', true).text('<?php echo esc_js( __( 'Processing...', 'spvs-cost-profit' ) ); ?>');
                 $('#spvs-recalc-progress').show();
                 $('#spvs-recalc-status').text('<?php echo esc_js( __( 'Initializing...', 'spvs-cost-profit' ) ); ?>');
@@ -2217,9 +2235,13 @@ final class SPVS_Cost_Profit {
                         nonce: nonce
                     },
                     success: function(response) {
+                        console.log('SPVS: Count response', response);
+
                         if (response.success) {
                             var total = response.data.total;
                             var productsWithCosts = response.data.products_with_costs;
+
+                            console.log('SPVS: Total items=' + total + ', Products with costs=' + productsWithCosts);
 
                             if (productsWithCosts === 0) {
                                 alert('<?php echo esc_js( __( 'Warning: No products have cost data. Please import costs first.', 'spvs-cost-profit' ) ); ?>');
@@ -2230,12 +2252,14 @@ final class SPVS_Cost_Profit {
                             $('#spvs-recalc-status').html('<?php echo esc_js( __( 'Processing {total} order items...', 'spvs-cost-profit' ) ); ?>'.replace('{total}', total.toLocaleString()));
                             processBatch(0, total);
                         } else {
+                            console.error('SPVS: Count failed', response);
                             alert('<?php echo esc_js( __( 'Error: Could not get count.', 'spvs-cost-profit' ) ); ?>');
                             resetButton();
                         }
                     },
-                    error: function() {
-                        alert('<?php echo esc_js( __( 'AJAX error occurred.', 'spvs-cost-profit' ) ); ?>');
+                    error: function(xhr, status, error) {
+                        console.error('SPVS: AJAX error', status, error, xhr.responseText);
+                        alert('<?php echo esc_js( __( 'AJAX error occurred. Check console for details.', 'spvs-cost-profit' ) ); ?>');
                         resetButton();
                     }
                 });
@@ -2244,6 +2268,8 @@ final class SPVS_Cost_Profit {
             function processBatch(offset, total) {
                 var batchSize = 100;
                 var processed = offset;
+
+                console.log('SPVS: Processing batch at offset=' + offset);
 
                 $.ajax({
                     url: ajaxurl,
@@ -2254,9 +2280,13 @@ final class SPVS_Cost_Profit {
                         offset: offset
                     },
                     success: function(response) {
+                        console.log('SPVS: Batch response', response);
+
                         if (response.success) {
                             processed += response.data.processed;
                             var percentage = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 100;
+
+                            console.log('SPVS: Progress=' + percentage + '%, processed=' + processed);
 
                             $('#spvs-recalc-progress-bar').css('width', percentage + '%');
                             $('#spvs-recalc-progress-text').text(percentage + '%');
@@ -2273,6 +2303,7 @@ final class SPVS_Cost_Profit {
                                 }, 500); // Small delay between batches
                             } else {
                                 // Complete
+                                console.log('SPVS: Recalculation complete!');
                                 $('#spvs-recalc-status').html('<span style="color: #00a32a; font-weight: bold;">✓ <?php echo esc_js( __( 'Complete! Processed {processed} items.', 'spvs-cost-profit' ) ); ?></span>'
                                     .replace('{processed}', processed.toLocaleString())
                                 );
@@ -2281,18 +2312,21 @@ final class SPVS_Cost_Profit {
                                 }, 2000);
                             }
                         } else {
+                            console.error('SPVS: Batch processing failed', response);
                             alert('<?php echo esc_js( __( 'Error processing batch.', 'spvs-cost-profit' ) ); ?>');
                             resetButton();
                         }
                     },
-                    error: function() {
-                        alert('<?php echo esc_js( __( 'AJAX error during batch processing.', 'spvs-cost-profit' ) ); ?>');
+                    error: function(xhr, status, error) {
+                        console.error('SPVS: Batch AJAX error', status, error, xhr.responseText);
+                        alert('<?php echo esc_js( __( 'AJAX error during batch processing. Check console.', 'spvs-cost-profit' ) ); ?>');
                         resetButton();
                     }
                 });
             }
 
             function resetButton() {
+                console.log('SPVS: Resetting button');
                 processing = false;
                 $('#spvs-recalc-profit-btn').prop('disabled', false).text('<?php echo esc_js( __( 'Recalculate Historical Profit', 'spvs-cost-profit' ) ); ?>');
                 $('#spvs-recalc-progress').hide();
