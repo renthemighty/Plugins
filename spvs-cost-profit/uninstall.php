@@ -38,6 +38,12 @@ function spvs_cost_profit_uninstall() {
 
     // Remove options
     delete_option( 'spvs_inventory_totals_cache' );
+    delete_option( 'spvs_db_version' );
+    delete_option( 'spvs_last_integrity_check' );
+
+    // Remove audit table (v3.0.0+)
+    $audit_table = $wpdb->prefix . 'spvs_cost_audit';
+    $wpdb->query( "DROP TABLE IF EXISTS {$audit_table}" );
 
     // Remove product meta data
     $product_meta_keys = array(
