@@ -4,7 +4,7 @@
  * Plugin URI: https://example.com
  * Description: Create bundle products with automatic stock management
  * Version: 3.0.0
- * Author: Your Name
+ * Author: Megatron
  * Author URI: https://example.com
  * Requires at least: 5.8
  * Requires PHP: 7.4

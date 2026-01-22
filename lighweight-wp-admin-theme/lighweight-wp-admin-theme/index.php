@@ -1,7 +1,7 @@
 <?php
 /*
  * Plugin Name: Custom WP-Admin Theme
- * Author: MetWrk SafeHouse
+ * Author: Megatron
  * Author URI: https://metwrk.com
  * Version: 1.1
  * Description: "Super lightweight wp-admin theme for wordpress.
