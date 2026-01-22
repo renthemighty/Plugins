@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 3.0.0
+ * Version: 3.0.1
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -33,7 +33,7 @@ final class SPVS_Cost_Profit {
     const IMPORT_MISSES_TRANSIENT   = 'spvs_cost_import_misses';
 
     // Data integrity & audit
-    const DB_VERSION                = '3.0.0';
+    const DB_VERSION                = '3.0.1';
     const BACKUP_TRANSIENT_PREFIX   = 'spvs_backup_';
     const INTEGRITY_CHECK_OPTION    = 'spvs_last_integrity_check';
     const AUDIT_LOG_RETENTION_DAYS  = 90; // Keep audit logs for 90 days
@@ -222,8 +222,11 @@ final class SPVS_Cost_Profit {
         add_action( 'admin_post_spvs_export_profit_report', array( $this, 'export_profit_report_csv' ) );
         add_action( 'admin_post_spvs_export_top_products', array( $this, 'export_top_products_csv' ) );
 
-        /** COG Import (server-side, no AJAX) */
+        /** COG Import (server-side, no AJAX) - Now supports WooCommerce & Algolytics COG */
         add_action( 'admin_post_spvs_import_cog', array( $this, 'import_cog_costs' ) );
+
+        /** Bulk historical profit recalculation */
+        add_action( 'admin_post_spvs_recalc_historical_profit', array( $this, 'recalculate_historical_profit' ) );
 
         /** Daily cron for inventory totals */
         add_action( 'init', array( $this, 'maybe_schedule_daily_cron' ) );
@@ -715,24 +718,28 @@ final class SPVS_Cost_Profit {
         $overwrite = isset( $_POST['spvs_cog_overwrite'] ) && $_POST['spvs_cog_overwrite'] === '1';
         $delete_after = isset( $_POST['spvs_cog_delete_after'] ) && $_POST['spvs_cog_delete_after'] === '1';
 
-        // Get all product IDs with COG data
-        $product_ids = $wpdb->get_col( "
-            SELECT DISTINCT pm.post_id
-            FROM {$wpdb->postmeta} pm
-            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
-            WHERE pm.meta_key = '_wc_cog_cost'
-            AND pm.meta_value != ''
-            AND pm.meta_value != '0'
-            AND p.post_type IN ('product', 'product_variation')
-            ORDER BY pm.post_id ASC
-        " );
+        // Support multiple COG plugin formats
+        $cog_meta_keys = array( '_wc_cog_cost', '_alg_wc_cog_cost' );
 
         $imported = 0;
         $updated = 0;
         $skipped = 0;
 
-        foreach ( $product_ids as $product_id ) {
-            $cog_cost = get_post_meta( $product_id, '_wc_cog_cost', true );
+        foreach ( $cog_meta_keys as $cog_key ) {
+            // Get all product IDs with this COG format
+            $product_ids = $wpdb->get_col( $wpdb->prepare( "
+                SELECT DISTINCT pm.post_id
+                FROM {$wpdb->postmeta} pm
+                INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+                WHERE pm.meta_key = %s
+                AND pm.meta_value != ''
+                AND pm.meta_value != '0'
+                AND p.post_type IN ('product', 'product_variation')
+                ORDER BY pm.post_id ASC
+            ", $cog_key ) );
+
+            foreach ( $product_ids as $product_id ) {
+                $cog_cost = get_post_meta( $product_id, $cog_key, true );
 
             // CRITICAL: Verify COG cost is valid before doing ANYTHING
             if ( empty( $cog_cost ) || floatval( $cog_cost ) <= 0 ) {
@@ -761,17 +768,18 @@ final class SPVS_Cost_Profit {
                 $action = 'create';
             }
 
-            // Log the change
-            $this->log_cost_change( $product_id, $action, $existing_cost, $new_cost, 'cog_import', array( 'overwrite' => $overwrite, 'delete_after' => $delete_after ) );
+                // Log the change
+                $this->log_cost_change( $product_id, $action, $existing_cost, $new_cost, 'cog_import', array( 'source' => $cog_key, 'overwrite' => $overwrite, 'delete_after' => $delete_after ) );
 
-            // ONLY delete COG data if successfully imported
-            if ( $delete_after ) {
-                delete_post_meta( $product_id, '_wc_cog_cost' );
-            }
+                // ONLY delete COG data if successfully imported
+                if ( $delete_after ) {
+                    delete_post_meta( $product_id, $cog_key );
+                }
 
-            // Small delay every 100 products to avoid timeout
-            if ( ( $imported + $updated + $skipped ) % 100 === 0 ) {
-                usleep( 100000 );
+                // Small delay every 100 products to avoid timeout
+                if ( ( $imported + $updated + $skipped ) % 100 === 0 ) {
+                    usleep( 100000 );
+                }
             }
         }
 
@@ -1921,6 +1929,13 @@ final class SPVS_Cost_Profit {
                         esc_html( sprintf( __( 'COG import finished. Imported: %d, Updated: %d, Skipped: %d', 'spvs-cost-profit' ), (int)$parts[1], (int)$parts[2], (int)$parts[3] ) )
                     );
                 }
+            } elseif ( 0 === strpos( $m, 'profit_recalc_done:' ) ) {
+                $parts = explode( ':', $m );
+                if ( count( $parts ) === 2 ) {
+                    printf( '<div class="notice notice-success"><p>%s</p></div>',
+                        esc_html( sprintf( __( 'Historical profit recalculation completed. Processed %d order items.', 'spvs-cost-profit' ), (int)$parts[1] ) )
+                    );
+                }
             }
         }
 
@@ -2086,6 +2101,7 @@ final class SPVS_Cost_Profit {
         echo '<p style="margin-top: 20px;">';
         echo '<a href="' . esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health', 'action' => 'run_integrity_check' ), admin_url( 'admin.php' ) ) ) . '" class="button button-primary">' . esc_html__( 'Run Full Integrity Check', 'spvs-cost-profit' ) . '</a>';
         echo ' <a href="' . esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health', 'action' => 'fix_missing_profit' ), admin_url( 'admin.php' ) ) ) . '" class="button">' . esc_html__( 'Fix Missing Profit Data', 'spvs-cost-profit' ) . '</a>';
+        echo ' <a href="' . esc_url( wp_nonce_url( admin_url( 'admin-post.php?action=spvs_recalc_historical_profit' ), 'spvs_recalc_profit' ) ) . '" class="button" onclick="return confirm(\'' . esc_js( __( 'This will recalculate profit for ALL historical orders. This may take a few moments. Continue?', 'spvs-cost-profit' ) ) . '\');">' . esc_html__( 'Recalculate Historical Profit', 'spvs-cost-profit' ) . '</a>';
         echo ' <a href="' . esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health', 'action' => 'cleanup_audit' ), admin_url( 'admin.php' ) ) ) . '" class="button">' . esc_html__( 'Cleanup Old Audit Logs', 'spvs-cost-profit' ) . '</a>';
         echo '</p>';
 
@@ -2204,6 +2220,112 @@ final class SPVS_Cost_Profit {
         }
 
         return $fixed;
+    }
+
+    /**
+     * Recalculate historical profit for all orders
+     *
+     * This function performs a bulk recalculation of profit data for all historical orders.
+     * It's useful when costs have been imported after orders were placed.
+     *
+     * Process:
+     * 1. Add unit costs to order items from current product costs
+     * 2. Calculate line profit (revenue - cost × qty)
+     * 3. Calculate total profit per order
+     */
+    public function recalculate_historical_profit() {
+        if ( ! current_user_can( 'manage_woocommerce' ) ) {
+            wp_die( esc_html__( 'Insufficient permissions.', 'spvs-cost-profit' ) );
+        }
+
+        check_admin_referer( 'spvs_recalc_profit' );
+
+        global $wpdb;
+
+        // Step 1: Add unit costs to order items from current product costs
+        $step1 = $wpdb->query( "
+            INSERT INTO {$wpdb->prefix}woocommerce_order_itemmeta (order_item_id, meta_key, meta_value)
+            SELECT oi.order_item_id, '_spvs_unit_cost', COALESCE(pm.meta_value, '0')
+            FROM {$wpdb->prefix}woocommerce_order_items oi
+            INNER JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_product
+                ON oi.order_item_id = oim_product.order_item_id
+                AND oim_product.meta_key = '_product_id'
+            LEFT JOIN {$wpdb->postmeta} pm
+                ON oim_product.meta_value = pm.post_id
+                AND pm.meta_key = '_spvs_cost_price'
+            WHERE oi.order_item_type = 'line_item'
+            ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+        " );
+
+        usleep( 100000 ); // Rate limiting
+
+        // Step 2: Calculate line profit for each order item
+        $step2 = $wpdb->query( "
+            INSERT INTO {$wpdb->prefix}woocommerce_order_itemmeta (order_item_id, meta_key, meta_value)
+            SELECT oi.order_item_id, '_spvs_line_profit',
+                ROUND(COALESCE(oim_total.meta_value, 0) -
+                      (COALESCE(oim_cost.meta_value, 0) * COALESCE(oim_qty.meta_value, 0)), 2)
+            FROM {$wpdb->prefix}woocommerce_order_items oi
+            LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_total
+                ON oi.order_item_id = oim_total.order_item_id
+                AND oim_total.meta_key = '_line_total'
+            LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_cost
+                ON oi.order_item_id = oim_cost.order_item_id
+                AND oim_cost.meta_key = '_spvs_unit_cost'
+            LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_qty
+                ON oi.order_item_id = oim_qty.order_item_id
+                AND oim_qty.meta_key = '_qty'
+            WHERE oi.order_item_type = 'line_item'
+            ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+        " );
+
+        usleep( 100000 ); // Rate limiting
+
+        // Step 3: Calculate total profit per order
+        // Check if HPOS is enabled
+        $orders_table = $wpdb->prefix . 'wc_orders';
+        $hpos_enabled = $wpdb->get_var( "SHOW TABLES LIKE '{$orders_table}'" ) === $orders_table;
+
+        if ( $hpos_enabled ) {
+            // Use HPOS table
+            $step3 = $wpdb->query( "
+                INSERT INTO {$wpdb->prefix}wc_orders_meta (order_id, meta_key, meta_value)
+                SELECT oi.order_id, '_spvs_total_profit',
+                    ROUND(SUM(COALESCE(oim_profit.meta_value, 0)), 2)
+                FROM {$wpdb->prefix}woocommerce_order_items oi
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                    ON oi.order_item_id = oim_profit.order_item_id
+                    AND oim_profit.meta_key = '_spvs_line_profit'
+                WHERE oi.order_item_type = 'line_item'
+                GROUP BY oi.order_id
+                ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+            " );
+        } else {
+            // Use legacy postmeta table
+            $step3 = $wpdb->query( "
+                INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+                SELECT oi.order_id, '_spvs_total_profit',
+                    ROUND(SUM(COALESCE(oim_profit.meta_value, 0)), 2)
+                FROM {$wpdb->prefix}woocommerce_order_items oi
+                LEFT JOIN {$wpdb->prefix}woocommerce_order_itemmeta oim_profit
+                    ON oi.order_item_id = oim_profit.order_item_id
+                    AND oim_profit.meta_key = '_spvs_line_profit'
+                WHERE oi.order_item_type = 'line_item'
+                GROUP BY oi.order_id
+                ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
+            " );
+        }
+
+        // Count total orders affected
+        $total_affected = $step1 !== false ? $step1 : 0;
+
+        $msg = sprintf( 'profit_recalc_done:%d', $total_affected );
+        wp_safe_redirect( add_query_arg( array(
+            'page' => 'spvs-dashboard',
+            'tab' => 'health',
+            'spvs_msg' => rawurlencode( $msg )
+        ), admin_url( 'admin.php' ) ) );
+        exit;
     }
 
     public function download_missing_cost_csv() {
