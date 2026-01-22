@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 3.0.1
+ * Version: 3.0.2
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -33,7 +33,7 @@ final class SPVS_Cost_Profit {
     const IMPORT_MISSES_TRANSIENT   = 'spvs_cost_import_misses';
 
     // Data integrity & audit
-    const DB_VERSION                = '3.0.1';
+    const DB_VERSION                = '3.0.2';
     const BACKUP_TRANSIENT_PREFIX   = 'spvs_backup_';
     const INTEGRITY_CHECK_OPTION    = 'spvs_last_integrity_check';
     const AUDIT_LOG_RETENTION_DAYS  = 90; // Keep audit logs for 90 days
@@ -1428,6 +1428,26 @@ final class SPVS_Cost_Profit {
             return;
         }
 
+        // Check for suspicious data (all profits are zero)
+        $all_profits_zero = true;
+        foreach ( $report_data as $row ) {
+            if ( (float) $row->total_profit != 0 ) {
+                $all_profits_zero = false;
+                break;
+            }
+        }
+
+        if ( $all_profits_zero ) {
+            echo '<div class="notice notice-warning"><p>';
+            echo esc_html__( 'Warning: All periods show $0 profit. This usually means:', 'spvs-cost-profit' ) . '<br>';
+            echo '• ' . esc_html__( 'Product costs have not been set', 'spvs-cost-profit' ) . '<br>';
+            echo '• ' . esc_html__( 'Historical profit data has not been calculated', 'spvs-cost-profit' ) . '<br>';
+            echo '<br><strong>' . esc_html__( 'Action Required:', 'spvs-cost-profit' ) . '</strong><br>';
+            echo '1. ' . sprintf( '<a href="%s">' . esc_html__( 'Import costs from COG plugin', 'spvs-cost-profit' ) . '</a>', esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'import' ), admin_url( 'admin.php' ) ) ) ) . '<br>';
+            echo '2. ' . sprintf( '<a href="%s">' . esc_html__( 'Recalculate historical profit', 'spvs-cost-profit' ) . '</a>', esc_url( add_query_arg( array( 'page' => 'spvs-dashboard', 'tab' => 'health' ), admin_url( 'admin.php' ) ) ) ) . '<br>';
+            echo '</p></div>';
+        }
+
         // Calculate totals
         $periods = array();
         $revenues = array();
@@ -1579,7 +1599,7 @@ final class SPVS_Cost_Profit {
                                 position: 'left',
                                 ticks: {
                                     callback: function(value) {
-                                        return '<?php echo esc_js( get_woocommerce_currency_symbol() ); ?>' + value.toFixed(2);
+                                        return '<?php echo get_woocommerce_currency_symbol(); ?>' + value.toFixed(2);
                                     }
                                 }
                             }
@@ -1931,11 +1951,19 @@ final class SPVS_Cost_Profit {
                 }
             } elseif ( 0 === strpos( $m, 'profit_recalc_done:' ) ) {
                 $parts = explode( ':', $m );
-                if ( count( $parts ) === 2 ) {
+                if ( count( $parts ) === 3 ) {
                     printf( '<div class="notice notice-success"><p>%s</p></div>',
-                        esc_html( sprintf( __( 'Historical profit recalculation completed. Processed %d order items.', 'spvs-cost-profit' ), (int)$parts[1] ) )
+                        esc_html( sprintf( __( 'Historical profit recalculation completed. Processed %d order items. %d products have cost data.', 'spvs-cost-profit' ), (int)$parts[1], (int)$parts[2] ) )
                     );
+                    if ( (int)$parts[2] === 0 ) {
+                        echo '<div class="notice notice-warning"><p>' . esc_html__( 'Warning: No products have cost data. Please import costs first or set costs manually on products.', 'spvs-cost-profit' ) . '</p></div>';
+                    }
                 }
+            } elseif ( 0 === strpos( $m, 'profit_recalc_error:' ) ) {
+                $error_msg = str_replace( 'profit_recalc_error:', '', $m );
+                printf( '<div class="notice notice-error"><p>%s</p></div>',
+                    esc_html( sprintf( __( 'Historical profit recalculation failed: %s', 'spvs-cost-profit' ), $error_msg ) )
+                );
             }
         }
 
@@ -2242,6 +2270,10 @@ final class SPVS_Cost_Profit {
 
         global $wpdb;
 
+        // Prevent SQL errors from breaking the process
+        $wpdb->show_errors();
+        $errors = array();
+
         // Step 1: Add unit costs to order items from current product costs
         $step1 = $wpdb->query( "
             INSERT INTO {$wpdb->prefix}woocommerce_order_itemmeta (order_item_id, meta_key, meta_value)
@@ -2256,6 +2288,10 @@ final class SPVS_Cost_Profit {
             WHERE oi.order_item_type = 'line_item'
             ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
         " );
+
+        if ( $step1 === false ) {
+            $errors[] = 'Step 1 (unit costs) failed: ' . $wpdb->last_error;
+        }
 
         usleep( 100000 ); // Rate limiting
 
@@ -2278,6 +2314,10 @@ final class SPVS_Cost_Profit {
             WHERE oi.order_item_type = 'line_item'
             ON DUPLICATE KEY UPDATE meta_value = VALUES(meta_value)
         " );
+
+        if ( $step2 === false ) {
+            $errors[] = 'Step 2 (line profit) failed: ' . $wpdb->last_error;
+        }
 
         usleep( 100000 ); // Rate limiting
 
@@ -2316,10 +2356,29 @@ final class SPVS_Cost_Profit {
             " );
         }
 
-        // Count total orders affected
-        $total_affected = $step1 !== false ? $step1 : 0;
+        if ( $step3 === false ) {
+            $errors[] = 'Step 3 (order totals) failed: ' . $wpdb->last_error;
+        }
 
-        $msg = sprintf( 'profit_recalc_done:%d', $total_affected );
+        // Count products with costs
+        $products_with_costs = $wpdb->get_var( $wpdb->prepare( "
+            SELECT COUNT(DISTINCT pm.post_id)
+            FROM {$wpdb->postmeta} pm
+            INNER JOIN {$wpdb->posts} p ON pm.post_id = p.ID
+            WHERE pm.meta_key = %s
+            AND pm.meta_value != ''
+            AND pm.meta_value != '0'
+            AND p.post_type IN ('product', 'product_variation')
+        ", self::PRODUCT_COST_META ) );
+
+        // Build result message
+        if ( ! empty( $errors ) ) {
+            $msg = 'profit_recalc_error:' . implode( ' | ', $errors );
+        } else {
+            $total_affected = $step1 !== false ? $step1 : 0;
+            $msg = sprintf( 'profit_recalc_done:%d:%d', $total_affected, $products_with_costs );
+        }
+
         wp_safe_redirect( add_query_arg( array(
             'page' => 'spvs-dashboard',
             'tab' => 'health',
