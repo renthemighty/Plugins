@@ -2,7 +2,7 @@
 /**
  * Plugin Name: SPVS Cost & Profit for WooCommerce
  * Description: Adds product cost, computes profit per order, TCOP/Retail inventory totals with CSV export/import, monthly profit reports, and COG import.
- * Version: 2.1.0
+ * Version: 3.0.0
  * Author: Megatron
  * License: GPL-2.0+
  * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
@@ -33,7 +33,7 @@ final class SPVS_Cost_Profit {
     const IMPORT_MISSES_TRANSIENT   = 'spvs_cost_import_misses';
 
     // Data integrity & audit
-    const DB_VERSION                = '2.1.0';
+    const DB_VERSION                = '3.0.0';
     const BACKUP_TRANSIENT_PREFIX   = 'spvs_backup_';
     const INTEGRITY_CHECK_OPTION    = 'spvs_last_integrity_check';
     const AUDIT_LOG_RETENTION_DAYS  = 90; // Keep audit logs for 90 days

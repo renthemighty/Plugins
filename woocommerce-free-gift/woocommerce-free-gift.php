@@ -4,7 +4,7 @@
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Automatically add a free gift product to every order
  * Version: 2.1.4
- * Author: SPVS
+ * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
  * Tested up to: 6.4
