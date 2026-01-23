@@ -60,6 +60,11 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 1.1.4
+- **FIXED: Now correctly uses type='internal' parameter to get only private notes**
+- Simplified note retrieval to use proper WooCommerce API
+- Removes all manual filtering - WooCommerce handles it correctly
+
 ### 1.1.3
 - Use WooCommerce native wc_get_order_notes() function for better compatibility
 - Support for HPOS (High-Performance Order Storage)
