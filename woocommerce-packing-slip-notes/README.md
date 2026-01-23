@@ -60,6 +60,13 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.1.0
+- **Direct database query approach for absolute reliability**
+- Queries wp_comments and wp_commentmeta tables directly
+- SQL query explicitly excludes notes where is_customer_note = '1'
+- Bypasses all WooCommerce functions for maximum control
+- Guaranteed to only return private notes
+
 ### 2.0.2
 - **Use type='internal' parameter in wc_get_order_notes() for direct filtering**
 - Simplified to let WooCommerce handle filtering at query level

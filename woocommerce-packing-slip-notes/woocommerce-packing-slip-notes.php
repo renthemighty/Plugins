@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips
- * Version: 2.0.2
+ * Version: 2.1.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -119,38 +119,32 @@ class WC_Packing_Slip_Notes {
     }
 
     /**
-     * Get private notes for an order
+     * Get private notes for an order using direct database query
      * Only returns private/internal notes, excludes customer-facing notes
      */
     private function get_private_notes($order_id) {
-        // Use wc_get_order_notes() function with type='internal' to get ONLY private notes
-        if (!function_exists('wc_get_order_notes')) {
-            return [];
-        }
+        global $wpdb;
 
-        // Get ONLY internal/private notes by specifying type parameter
-        // type='internal' returns only private notes (not customer-facing)
-        $notes = wc_get_order_notes([
-            'order_id' => $order_id,
-            'type'     => 'internal', // THIS is the key - gets ONLY private notes
-        ]);
+        // Query comments table directly for order notes
+        // Join with commentmeta to filter out customer notes
+        $query = $wpdb->prepare("
+            SELECT c.comment_ID, c.comment_content, c.comment_date, c.user_id
+            FROM {$wpdb->comments} c
+            LEFT JOIN {$wpdb->commentmeta} cm ON c.comment_ID = cm.comment_id AND cm.meta_key = 'is_customer_note'
+            WHERE c.comment_post_ID = %d
+            AND c.comment_type = 'order_note'
+            AND c.comment_approved = '1'
+            AND (cm.meta_value IS NULL OR cm.meta_value != '1')
+            ORDER BY c.comment_date_gmt DESC
+        ", $order_id);
+
+        $notes = $wpdb->get_results($query);
 
         if (empty($notes)) {
             return [];
         }
 
-        // Convert to format expected by format_notes()
-        $private_notes = [];
-        foreach ($notes as $note) {
-            $private_notes[] = (object)[
-                'comment_ID' => isset($note->id) ? $note->id : 0,
-                'comment_content' => isset($note->content) ? $note->content : '',
-                'comment_date' => isset($note->date_created) && is_object($note->date_created) ? $note->date_created->date('Y-m-d H:i:s') : '',
-                'user_id' => isset($note->added_by_user) ? 1 : 0,
-            ];
-        }
-
-        return $private_notes;
+        return $notes;
     }
 
     /**
