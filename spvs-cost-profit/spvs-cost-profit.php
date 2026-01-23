@@ -2180,13 +2180,14 @@ final class SPVS_Cost_Profit {
         echo '</p>';
 
         // Progress bar for historical profit recalculation
-        echo '<div id="spvs-recalc-progress" style="display: none; margin-top: 20px; padding: 15px; background: #f0f0f1; border: 1px solid #ccc; border-radius: 4px;">';
-        echo '<div style="margin-bottom: 10px;"><strong>' . esc_html__( 'Recalculating Historical Profit...', 'spvs-cost-profit' ) . '</strong></div>';
-        echo '<div style="background: #fff; border: 1px solid #ddd; height: 30px; border-radius: 3px; overflow: hidden; position: relative;">';
+        echo '<div id="spvs-recalc-progress" style="display: none; position: sticky; top: 32px; z-index: 9999; margin: 20px -20px; padding: 20px; background: #fff; border: 3px solid #2271b1; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">';
+        echo '<div style="margin-bottom: 15px;"><strong style="font-size: 18px; color: #2271b1;">⚙️ ' . esc_html__( 'Recalculating Historical Profit...', 'spvs-cost-profit' ) . '</strong></div>';
+        echo '<div style="background: #f0f0f1; border: 2px solid #ddd; height: 50px; border-radius: 5px; overflow: hidden; position: relative; margin-bottom: 10px;">';
         echo '<div id="spvs-recalc-progress-bar" style="height: 100%; background: linear-gradient(to right, #00a32a, #00d084); width: 0%; transition: width 0.3s;"></div>';
-        echo '<div id="spvs-recalc-progress-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; color: #333;">0%</div>';
+        echo '<div id="spvs-recalc-progress-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: bold; font-size: 20px; color: #1d2327; text-shadow: 0 0 3px rgba(255,255,255,0.8);">0%</div>';
         echo '</div>';
-        echo '<div id="spvs-recalc-status" style="margin-top: 10px; font-size: 13px; color: #666;"></div>';
+        echo '<div id="spvs-recalc-status" style="font-size: 14px; color: #666; font-weight: 500;"></div>';
+        echo '<div id="spvs-recalc-error" style="display: none; margin-top: 12px; padding: 12px; background: #fff3cd; border-left: 4px solid #ffc107; color: #856404; font-weight: 500;"></div>';
         echo '</div>';
 
         // JavaScript for batch processing
@@ -2319,8 +2320,20 @@ final class SPVS_Cost_Profit {
                     },
                     error: function(xhr, status, error) {
                         console.error('SPVS: Batch AJAX error', status, error, xhr.responseText);
-                        alert('<?php echo esc_js( __( 'AJAX error during batch processing. Check console.', 'spvs-cost-profit' ) ); ?>');
-                        resetButton();
+
+                        var errorMsg = '';
+                        if (xhr.status === 503) {
+                            errorMsg = '⚠️ Server temporarily unavailable (maintenance mode). Processed ' + processed.toLocaleString() + ' of ' + total.toLocaleString() + ' items. Please wait a minute and try again.';
+                        } else if (xhr.status === 0) {
+                            errorMsg = '⚠️ Network error. Processed ' + processed.toLocaleString() + ' of ' + total.toLocaleString() + ' items. Please check your connection and try again.';
+                        } else {
+                            errorMsg = '⚠️ Error: ' + xhr.status + ' - ' + error + '. Processed ' + processed.toLocaleString() + ' of ' + total.toLocaleString() + ' items.';
+                        }
+
+                        $('#spvs-recalc-error').html(errorMsg).show();
+                        $('#spvs-recalc-status').html('<strong style="color: #d63638;">Processing stopped. ' + errorMsg + '</strong>');
+                        processing = false;
+                        $('#spvs-recalc-profit-btn').prop('disabled', false).text('<?php echo esc_js( __( 'Resume Recalculation', 'spvs-cost-profit' ) ); ?>');
                     }
                 });
             }
