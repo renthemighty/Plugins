@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds private (internal) order notes to WooCommerce packing slips
- * Version: 1.1.1
+ * Version: 1.1.2
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -138,10 +138,15 @@ class WC_Packing_Slip_Notes {
         $private_notes = [];
         foreach ($notes as $note) {
             $is_customer_note = get_comment_meta($note->comment_ID, 'is_customer_note', true);
-            // Only include if it's NOT a customer note
-            if ($is_customer_note != 1) {
-                $private_notes[] = $note;
+
+            // Skip customer notes - only include private/internal notes
+            // Customer notes have is_customer_note = 1 or '1'
+            if ($is_customer_note == 1 || $is_customer_note === '1' || $is_customer_note === 1) {
+                continue; // This is a customer note, skip it
             }
+
+            // This is a private note, include it
+            $private_notes[] = $note;
         }
 
         return $private_notes;

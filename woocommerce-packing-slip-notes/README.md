@@ -60,6 +60,10 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 1.1.2
+- Fixed filtering logic to properly exclude all customer notes
+- Improved note type detection with explicit comparison
+
 ### 1.1.1
 - Simplified to only show private notes (removed settings option)
 - Fixed filtering to ensure only private/internal notes are displayed
