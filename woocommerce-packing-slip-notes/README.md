@@ -60,6 +60,11 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 1.1.3
+- Use WooCommerce native wc_get_order_notes() function for better compatibility
+- Support for HPOS (High-Performance Order Storage)
+- More reliable filtering of private vs customer notes
+
 ### 1.1.2
 - Fixed filtering logic to properly exclude all customer notes
 - Improved note type detection with explicit comparison
