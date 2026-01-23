@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Adds private (internal) order notes to WooCommerce packing slips - DEBUG VERSION
- * Version: 1.2.2-debug
+ * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips
+ * Version: 2.0.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -119,61 +119,37 @@ class WC_Packing_Slip_Notes {
     }
 
     /**
-     * Get private notes for an order
+     * Get private notes for an order using WooCommerce Order object
      * Only returns private/internal notes, excludes customer-facing notes
      */
     private function get_private_notes($order_id) {
-        // Get ALL order notes first
-        $args = [
-            'post_id' => $order_id,
-            'orderby' => 'comment_date_gmt',
-            'order'   => 'DESC',
-            'type'    => 'order_note',
-        ];
+        // Get order object
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            return [];
+        }
 
-        remove_filter('comments_clauses', ['WC_Comments', 'exclude_order_comments']);
-        $all_notes = get_comments($args);
-        add_filter('comments_clauses', ['WC_Comments', 'exclude_order_comments']);
+        // Get ALL order notes using WC_Order method
+        // This returns WC_Order_Note objects
+        $all_notes = $order->get_notes();
 
-        // DEBUG: Get all meta for each note to see what's actually stored
-        $debug_output = '';
         $private_notes = [];
 
         foreach ($all_notes as $note) {
-            // Get ALL meta for this note
-            $all_meta = get_comment_meta($note->comment_ID);
+            // WC_Order_Note object has a customer_note property
+            // customer_note = true means it's a customer-facing note
+            // customer_note = false means it's a private/internal note
 
-            // Check is_customer_note meta
-            $is_customer_note = get_comment_meta($note->comment_ID, 'is_customer_note', true);
-            $note_type = get_comment_meta($note->comment_ID, 'order_note_type', true);
-
-            // DEBUG: Show what we're finding
-            $debug_output .= sprintf(
-                "Note ID: %d | is_customer_note: %s | order_note_type: %s | Content: %s<br>",
-                $note->comment_ID,
-                var_export($is_customer_note, true),
-                var_export($note_type, true),
-                substr($note->comment_content, 0, 50)
-            );
-
-            // EXCLUDE if:
-            // - is_customer_note equals 1 (string or int)
-            // - order_note_type equals 'customer'
-            if ($is_customer_note === 1 || $is_customer_note === '1' || $note_type === 'customer') {
-                $debug_output .= " --> EXCLUDED (customer note)<br>";
-                continue; // Skip this customer note
+            // ONLY include private notes (where customer_note is false/empty)
+            if (empty($note->customer_note)) {
+                // Convert to format expected by format_notes()
+                $private_notes[] = (object)[
+                    'comment_ID' => $note->get_id(),
+                    'comment_content' => $note->get_content(),
+                    'comment_date' => $note->get_date_created() ? $note->get_date_created()->date('Y-m-d H:i:s') : '',
+                    'user_id' => $note->get_added_by_user() ? 1 : 0,
+                ];
             }
-
-            $debug_output .= " --> INCLUDED (private note)<br>";
-            $private_notes[] = $note;
-        }
-
-        // Temporarily output debug info (remove this after testing)
-        if (current_user_can('manage_woocommerce') && isset($_GET['debug_notes'])) {
-            echo '<div style="background: #f0f0f0; padding: 20px; margin: 20px; border: 2px solid #000;">';
-            echo '<h3>DEBUG: Order Notes Analysis</h3>';
-            echo $debug_output;
-            echo '</div>';
         }
 
         return $private_notes;

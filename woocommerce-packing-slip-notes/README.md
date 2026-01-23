@@ -60,6 +60,13 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.0.0
+- **COMPLETE REWRITE: Now uses WooCommerce Order object's get_notes() method**
+- Uses WC_Order_Note objects with customer_note property for accurate filtering
+- Checks empty($note->customer_note) to identify private notes
+- Completely new approach that directly uses WooCommerce's native note system
+- More reliable and future-proof
+
 ### 1.2.1
 - **CORRECTLY FIXED: Uses meta_query to filter is_customer_note at database level**
 - Confirmed WooCommerce uses 'is_customer_note' meta field (value = 1 for customer notes)
