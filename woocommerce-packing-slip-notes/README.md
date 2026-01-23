@@ -60,6 +60,13 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.3.0
+- **FIXED: Exclude system-generated notes, only show manually-entered private notes**
+- Added filter: user_id > 0 (manual notes) vs user_id = 0 (system notes)
+- Now excludes: customer notes, system status changes, automated plugin notes
+- Only shows: private notes manually typed by staff in the order page
+- This is what users actually want - their own notes, not system messages
+
 ### 2.1.1
 - **Add CSS to hide template's default notes display**
 - Hide .document-notes, .order-notes, .customer-notes, .notes classes

@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips - DEBUG MODE
- * Version: 2.2.0-debug
+ * Description: Adds ONLY manually-entered private notes to WooCommerce packing slips (excludes system notes)
+ * Version: 2.3.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -169,8 +169,10 @@ class WC_Packing_Slip_Notes {
             echo '</div>';
         }
 
-        // Query comments table directly for order notes
-        // Join with commentmeta to filter out customer notes
+        // Query for ONLY manually-entered private notes
+        // Exclude: customer notes AND system-generated notes
+        // System notes usually have user_id = 0 (added by system, not manually)
+        // Manual private notes have user_id > 0 (added by staff)
         $query = $wpdb->prepare("
             SELECT c.comment_ID, c.comment_content, c.comment_date, c.user_id
             FROM {$wpdb->comments} c
@@ -179,6 +181,7 @@ class WC_Packing_Slip_Notes {
             AND c.comment_type = 'order_note'
             AND c.comment_approved = '1'
             AND (cm.meta_value IS NULL OR cm.meta_value != '1')
+            AND c.user_id > 0
             ORDER BY c.comment_date_gmt DESC
         ", $order_id);
 
