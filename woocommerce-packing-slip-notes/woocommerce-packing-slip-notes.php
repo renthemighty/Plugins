@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips
- * Version: 2.1.1
+ * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips - DEBUG MODE
+ * Version: 2.2.0-debug
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -124,6 +124,50 @@ class WC_Packing_Slip_Notes {
      */
     private function get_private_notes($order_id) {
         global $wpdb;
+
+        // DEBUG MODE: Get ALL notes with ALL their meta to see what we're dealing with
+        if (isset($_GET['debug_packing_notes']) && current_user_can('manage_woocommerce')) {
+            $all_notes_query = $wpdb->prepare("
+                SELECT c.comment_ID, c.comment_content, c.comment_date
+                FROM {$wpdb->comments} c
+                WHERE c.comment_post_ID = %d
+                AND c.comment_type = 'order_note'
+                ORDER BY c.comment_date_gmt DESC
+            ", $order_id);
+
+            $all_notes = $wpdb->get_results($all_notes_query);
+
+            echo '<div style="background: yellow; padding: 20px; margin: 20px; border: 3px solid red; font-family: monospace; font-size: 11px;">';
+            echo '<h2>DEBUG: All Order Notes Meta Analysis</h2>';
+
+            foreach ($all_notes as $note) {
+                echo '<div style="border: 1px solid black; padding: 10px; margin: 10px 0; background: white;">';
+                echo '<strong>Note ID:</strong> ' . $note->comment_ID . '<br>';
+                echo '<strong>Content:</strong> ' . esc_html(substr($note->comment_content, 0, 100)) . '<br>';
+
+                // Get ALL meta for this note
+                $meta_query = $wpdb->prepare("
+                    SELECT meta_key, meta_value
+                    FROM {$wpdb->commentmeta}
+                    WHERE comment_id = %d
+                ", $note->comment_ID);
+
+                $all_meta = $wpdb->get_results($meta_query);
+
+                if (!empty($all_meta)) {
+                    echo '<strong>META:</strong><br>';
+                    foreach ($all_meta as $meta) {
+                        echo '&nbsp;&nbsp;' . esc_html($meta->meta_key) . ' = ' . var_export($meta->meta_value, true) . '<br>';
+                    }
+                } else {
+                    echo '<strong>META:</strong> NO META FOUND<br>';
+                }
+
+                echo '</div>';
+            }
+
+            echo '</div>';
+        }
 
         // Query comments table directly for order notes
         // Join with commentmeta to filter out customer notes
