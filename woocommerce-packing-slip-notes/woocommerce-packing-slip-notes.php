@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds private (internal) order notes to WooCommerce packing slips
- * Version: 1.2.0
+ * Version: 1.2.1
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -121,37 +121,36 @@ class WC_Packing_Slip_Notes {
     /**
      * Get private notes for an order
      * Only returns private/internal notes, excludes customer-facing notes
-     * Private notes have empty order_note_type, customer notes have order_note_type = 'customer'
+     * WooCommerce sets is_customer_note = 1 for customer notes
+     * Private notes either don't have this meta or it's 0
      */
     private function get_private_notes($order_id) {
-        // Get all order notes
+        // Get order notes using meta query to filter at database level
+        // Exclude notes where is_customer_note = 1 (customer notes)
         $args = [
             'post_id' => $order_id,
             'orderby' => 'comment_date_gmt',
             'order'   => 'DESC',
             'type'    => 'order_note',
+            'meta_query' => [
+                'relation' => 'OR',
+                [
+                    'key'     => 'is_customer_note',
+                    'compare' => 'NOT EXISTS', // Private notes may not have this meta at all
+                ],
+                [
+                    'key'     => 'is_customer_note',
+                    'value'   => '1',
+                    'compare' => '!=', // Exclude customer notes (is_customer_note = 1)
+                ],
+            ],
         ];
 
         remove_filter('comments_clauses', ['WC_Comments', 'exclude_order_comments']);
         $notes = get_comments($args);
         add_filter('comments_clauses', ['WC_Comments', 'exclude_order_comments']);
 
-        // Filter to only get private/internal notes
-        // WooCommerce stores note type in 'order_note_type' comment meta
-        // Private notes: order_note_type is empty or not set
-        // Customer notes: order_note_type = 'customer'
-        $private_notes = [];
-        foreach ($notes as $note) {
-            $note_type = get_comment_meta($note->comment_ID, 'order_note_type', true);
-
-            // Only include notes where order_note_type is NOT 'customer'
-            // This includes: empty, not set, or any other value except 'customer'
-            if ($note_type !== 'customer') {
-                $private_notes[] = $note;
-            }
-        }
-
-        return $private_notes;
+        return $notes;
     }
 
     /**

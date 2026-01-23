@@ -60,6 +60,12 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 1.2.1
+- **CORRECTLY FIXED: Uses meta_query to filter is_customer_note at database level**
+- Confirmed WooCommerce uses 'is_customer_note' meta field (value = 1 for customer notes)
+- Now filters using meta_query in get_comments() for reliable database-level filtering
+- Excludes all notes where is_customer_note = 1
+
 ### 1.2.0
 - **PROPERLY FIXED: Now checks order_note_type meta field correctly**
 - Discovered WooCommerce uses 'order_note_type' meta, not 'is_customer_note'
