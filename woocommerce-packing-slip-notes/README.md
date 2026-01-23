@@ -60,6 +60,13 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 1.2.0
+- **PROPERLY FIXED: Now checks order_note_type meta field correctly**
+- Discovered WooCommerce uses 'order_note_type' meta, not 'is_customer_note'
+- Private notes have empty order_note_type, customer notes have 'customer'
+- Simplified code to directly filter by order_note_type meta field
+- Removed wc_get_order_notes dependency for more reliable filtering
+
 ### 1.1.4
 - **FIXED: Now correctly uses type='internal' parameter to get only private notes**
 - Simplified note retrieval to use proper WooCommerce API

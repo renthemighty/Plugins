@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds private (internal) order notes to WooCommerce packing slips
- * Version: 1.1.4
+ * Version: 1.2.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -121,33 +121,10 @@ class WC_Packing_Slip_Notes {
     /**
      * Get private notes for an order
      * Only returns private/internal notes, excludes customer-facing notes
+     * Private notes have empty order_note_type, customer notes have order_note_type = 'customer'
      */
     private function get_private_notes($order_id) {
-        // Use WooCommerce's built-in function to get order notes
-        // Setting type to 'internal' gets only private/admin notes
-        if (function_exists('wc_get_order_notes')) {
-            $notes = wc_get_order_notes([
-                'order_id' => $order_id,
-                'type'     => 'internal', // ONLY private/internal notes (not customer notes)
-                'orderby'  => 'date_created',
-                'order'    => 'DESC',
-            ]);
-
-            // Convert to format expected by format_notes()
-            $private_notes = [];
-            foreach ($notes as $note) {
-                $private_notes[] = (object)[
-                    'comment_ID' => isset($note->id) ? $note->id : 0,
-                    'comment_content' => isset($note->content) ? $note->content : '',
-                    'comment_date' => isset($note->date_created) ? $note->date_created->date('Y-m-d H:i:s') : '',
-                    'user_id' => isset($note->added_by_user) ? $note->added_by_user : 0,
-                ];
-            }
-
-            return $private_notes;
-        }
-
-        // Fallback for older WooCommerce versions
+        // Get all order notes
         $args = [
             'post_id' => $order_id,
             'orderby' => 'comment_date_gmt',
@@ -160,11 +137,16 @@ class WC_Packing_Slip_Notes {
         add_filter('comments_clauses', ['WC_Comments', 'exclude_order_comments']);
 
         // Filter to only get private/internal notes
+        // WooCommerce stores note type in 'order_note_type' comment meta
+        // Private notes: order_note_type is empty or not set
+        // Customer notes: order_note_type = 'customer'
         $private_notes = [];
         foreach ($notes as $note) {
-            $is_customer_note = get_comment_meta($note->comment_ID, 'is_customer_note', true);
-            // Only include if is_customer_note is NOT 1
-            if ($is_customer_note != 1 && $is_customer_note !== '1') {
+            $note_type = get_comment_meta($note->comment_ID, 'order_note_type', true);
+
+            // Only include notes where order_note_type is NOT 'customer'
+            // This includes: empty, not set, or any other value except 'customer'
+            if ($note_type !== 'customer') {
                 $private_notes[] = $note;
             }
         }
