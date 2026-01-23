@@ -1,9 +1,9 @@
 <?php
 /**
- * Plugin Name: WooCommerce Packing Slip Notes
+ * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Adds order notes (private, public, or both) to WooCommerce packing slips
- * Version: 1.1.0
+ * Description: Adds private (internal) order notes to WooCommerce packing slips
+ * Version: 1.1.1
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -67,33 +67,21 @@ class WC_Packing_Slip_Notes {
             [
                 'title' => __('Packing Slip Notes Settings', 'wc-packing-slip-notes'),
                 'type'  => 'title',
-                'desc'  => __('Configure how order notes appear on packing slips.', 'wc-packing-slip-notes'),
+                'desc'  => __('Configure how private notes appear on packing slips. Only private/internal notes (not customer notes) will be displayed.', 'wc-packing-slip-notes'),
                 'id'    => 'wc_packing_slip_notes_settings'
             ],
             [
-                'title'    => __('Enable Notes', 'wc-packing-slip-notes'),
-                'desc'     => __('Display order notes on packing slips', 'wc-packing-slip-notes'),
+                'title'    => __('Enable Private Notes', 'wc-packing-slip-notes'),
+                'desc'     => __('Display private order notes on packing slips', 'wc-packing-slip-notes'),
                 'id'       => 'wc_packing_slip_notes_enabled',
                 'default'  => 'yes',
                 'type'     => 'checkbox',
             ],
             [
-                'title'    => __('Note Type', 'wc-packing-slip-notes'),
-                'desc'     => __('Choose which types of notes to display on packing slips.', 'wc-packing-slip-notes'),
-                'id'       => 'wc_packing_slip_notes_type',
-                'default'  => 'private',
-                'type'     => 'select',
-                'options'  => [
-                    'private' => __('Private notes only', 'wc-packing-slip-notes'),
-                    'public'  => __('Public/customer notes only', 'wc-packing-slip-notes'),
-                    'both'    => __('Both private and public notes', 'wc-packing-slip-notes'),
-                ],
-            ],
-            [
                 'title'    => __('Notes Heading', 'wc-packing-slip-notes'),
                 'desc'     => __('The heading text displayed above the notes section.', 'wc-packing-slip-notes'),
                 'id'       => 'wc_packing_slip_notes_heading',
-                'default'  => 'Order Notes',
+                'default'  => 'Internal Notes',
                 'type'     => 'text',
             ],
             [
@@ -131,9 +119,10 @@ class WC_Packing_Slip_Notes {
     }
 
     /**
-     * Get order notes based on configured type
+     * Get private notes for an order
+     * Only returns private/internal notes, excludes customer-facing notes
      */
-    private function get_order_notes($order_id) {
+    private function get_private_notes($order_id) {
         $args = [
             'post_id' => $order_id,
             'orderby' => 'comment_date_gmt',
@@ -145,32 +134,17 @@ class WC_Packing_Slip_Notes {
         $notes = get_comments($args);
         add_filter('comments_clauses', ['WC_Comments', 'exclude_order_comments']);
 
-        $note_type = get_option('wc_packing_slip_notes_type', 'private');
-        $filtered_notes = [];
-
+        // Filter to only get private/internal notes (exclude customer notes)
+        $private_notes = [];
         foreach ($notes as $note) {
             $is_customer_note = get_comment_meta($note->comment_ID, 'is_customer_note', true);
-
-            if ($note_type === 'private' && $is_customer_note != 1) {
-                // Private notes only - exclude customer notes
-                $filtered_notes[] = $note;
-            } elseif ($note_type === 'public' && $is_customer_note == 1) {
-                // Public notes only - include only customer notes
-                $filtered_notes[] = $note;
-            } elseif ($note_type === 'both') {
-                // Include all notes
-                $filtered_notes[] = $note;
+            // Only include if it's NOT a customer note
+            if ($is_customer_note != 1) {
+                $private_notes[] = $note;
             }
         }
 
-        return $filtered_notes;
-    }
-
-    /**
-     * Get private notes for an order (backward compatibility)
-     */
-    private function get_private_notes($order_id) {
-        return $this->get_order_notes($order_id);
+        return $private_notes;
     }
 
     /**

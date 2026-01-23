@@ -1,20 +1,20 @@
-# WooCommerce Packing Slip Notes
+# WooCommerce Packing Slip Private Notes
 
-Adds order notes (private, public, or both) to WooCommerce packing slips automatically.
+Adds private (internal) order notes to WooCommerce packing slips automatically.
 
 ## Description
 
-This plugin automatically displays order notes on your WooCommerce packing slips. Perfect for warehouse staff and fulfillment teams who need to see notes when packing orders.
+This plugin automatically displays private order notes on your WooCommerce packing slips. Perfect for warehouse staff and fulfillment teams who need to see internal notes when packing orders.
 
 **Key Features:**
 
-- Automatically adds order notes to packing slips
-- Choose between private notes, public notes, or both
+- Automatically adds private order notes to packing slips
+- Only shows internal notes (customer notes are excluded)
 - Compatible with "PDF Invoices & Packing Slips for WooCommerce" by WP Overnight
 - Compatible with "WooCommerce Print Invoices/Packing Lists" plugin
 - Configurable display options
 - Clean, professional formatting
-- Smart note filtering based on your preferences
+- Simple and straightforward - works out of the box
 
 ## Installation
 
@@ -35,26 +35,19 @@ Navigate to **WooCommerce → Settings → Advanced → Packing Slip Notes**
 
 ### Settings Options:
 
-- **Enable Notes** - Turn the feature on/off
-- **Note Type** - Choose which notes to display:
-  - **Private notes only** (default) - Shows only internal notes not visible to customers
-  - **Public/customer notes only** - Shows only customer-facing notes
-  - **Both private and public notes** - Shows all order notes
-- **Notes Heading** - Customize the heading text (default: "Order Notes")
+- **Enable Private Notes** - Turn the feature on/off
+- **Notes Heading** - Customize the heading text (default: "Internal Notes")
 - **Include Timestamps** - Show when each note was added
 - **Include Author** - Show who added each note
 - **Maximum Notes** - Limit how many notes to display (0 = unlimited)
 
 ## Usage
 
-1. Configure which type of notes to display (WooCommerce → Settings → Advanced → Packing Slip Notes)
-2. Add notes to any WooCommerce order
-   - For private notes: Leave "Private note" unchecked or use the internal note option
-   - For public notes: Check "Note to customer"
-3. Generate a packing slip for the order
-4. Notes will automatically appear based on your settings
+1. Add private notes to any WooCommerce order (do NOT check "Note to customer")
+2. Generate a packing slip for the order
+3. Private notes will automatically appear on the packing slip
 
-**Default Behavior:** By default, only private/internal notes are displayed (not customer-facing notes).
+**Important:** Only private/internal notes are displayed. Customer-facing notes are automatically excluded.
 
 ## Compatible Plugins
 
@@ -67,11 +60,11 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
-### 1.1.0
-- Added option to choose note type: private only, public only, or both
-- Improved note filtering logic
-- Updated plugin name and descriptions
-- Changed default heading to "Order Notes"
+### 1.1.1
+- Simplified to only show private notes (removed settings option)
+- Fixed filtering to ensure only private/internal notes are displayed
+- Reverted heading default to "Internal Notes"
+- Improved code efficiency
 
 ### 1.0.0
 - Initial release
