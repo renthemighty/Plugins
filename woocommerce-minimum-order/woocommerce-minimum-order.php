@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Minimum Order
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Set a minimum order threshold and display a notice on checkout if not met
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -144,7 +144,7 @@ class WC_Minimum_Order {
         $notice = str_replace('{amount}', $formatted_amount, $message);
 
         echo '<div id="wc-minimum-order-notice" class="woocommerce-info" style="background:#e74c3c;color:white;padding:15px;margin-bottom:20px;border-radius:5px;text-align:center;font-size:16px;font-weight:bold;">';
-        echo esc_html($notice);
+        echo wp_kses_post($notice);
         echo '</div>';
     }
 
