@@ -60,6 +60,13 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.1.1
+- **Add CSS to hide template's default notes display**
+- Hide .document-notes, .order-notes, .customer-notes, .notes classes
+- Prevents template from showing notes that we can't control
+- Only our filtered private notes section will be visible
+- Fixes issue where template was showing all notes in addition to our filtered notes
+
 ### 2.1.0
 - **Direct database query approach for absolute reliability**
 - Queries wp_comments and wp_commentmeta tables directly

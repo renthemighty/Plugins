@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips
- * Version: 2.1.0
+ * Version: 2.1.1
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -43,7 +43,7 @@ class WC_Packing_Slip_Notes {
         add_filter('woocommerce_get_settings_advanced', [$this, 'add_settings'], 10, 2);
         add_filter('woocommerce_get_sections_advanced', [$this, 'add_section']);
 
-        // Add custom CSS for packing slips
+        // Add custom CSS for packing slips - includes hiding default template notes
         add_action('wpo_wcpdf_custom_styles', [$this, 'add_custom_styles']);
     }
 
@@ -274,6 +274,16 @@ class WC_Packing_Slip_Notes {
         }
         ?>
         <style>
+            /* HIDE any default notes that the template might display */
+            .document-notes,
+            .order-notes,
+            dl.customer-notes,
+            dl.notes,
+            .notes-container {
+                display: none !important;
+            }
+
+            /* Style for OUR custom private notes section */
             .wc-packing-slip-notes {
                 margin-top: 20px;
                 padding: 15px;
