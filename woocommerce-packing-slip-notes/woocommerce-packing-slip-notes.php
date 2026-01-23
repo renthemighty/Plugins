@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips
- * Version: 2.0.0
+ * Version: 2.0.1
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -119,35 +119,40 @@ class WC_Packing_Slip_Notes {
     }
 
     /**
-     * Get private notes for an order using WooCommerce Order object
+     * Get private notes for an order
      * Only returns private/internal notes, excludes customer-facing notes
      */
     private function get_private_notes($order_id) {
-        // Get order object
-        $order = wc_get_order($order_id);
-        if (!$order) {
+        // Use wc_get_order_notes() function - returns array of stdClass objects
+        // Each note has properties: id, date_created, content, customer_note, etc.
+        if (!function_exists('wc_get_order_notes')) {
             return [];
         }
 
-        // Get ALL order notes using WC_Order method
-        // This returns WC_Order_Note objects
-        $all_notes = $order->get_notes();
+        // Get ALL notes first (empty array gets all types)
+        $all_notes = wc_get_order_notes([
+            'order_id' => $order_id,
+        ]);
+
+        if (empty($all_notes)) {
+            return [];
+        }
 
         $private_notes = [];
 
         foreach ($all_notes as $note) {
-            // WC_Order_Note object has a customer_note property
-            // customer_note = true means it's a customer-facing note
-            // customer_note = false means it's a private/internal note
+            // $note is a stdClass object with customer_note property
+            // customer_note = 1 or true means it's a customer-facing note
+            // customer_note = 0 or false or empty means it's a private note
 
-            // ONLY include private notes (where customer_note is false/empty)
-            if (empty($note->customer_note)) {
+            // ONLY include private notes (where customer_note is NOT true/1)
+            if (empty($note->customer_note) || $note->customer_note == 0 || $note->customer_note === false) {
                 // Convert to format expected by format_notes()
                 $private_notes[] = (object)[
-                    'comment_ID' => $note->get_id(),
-                    'comment_content' => $note->get_content(),
-                    'comment_date' => $note->get_date_created() ? $note->get_date_created()->date('Y-m-d H:i:s') : '',
-                    'user_id' => $note->get_added_by_user() ? 1 : 0,
+                    'comment_ID' => isset($note->id) ? $note->id : 0,
+                    'comment_content' => isset($note->content) ? $note->content : '',
+                    'comment_date' => isset($note->date_created) && is_object($note->date_created) ? $note->date_created->date('Y-m-d H:i:s') : '',
+                    'user_id' => isset($note->added_by_user) ? 1 : 0,
                 ];
             }
         }

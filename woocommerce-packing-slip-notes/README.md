@@ -60,6 +60,12 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.0.1
+- **FIXED: Use wc_get_order_notes() function instead of $order->get_notes()**
+- Fixed fatal error: Call to undefined method get_notes()
+- Properly uses wc_get_order_notes() standalone function
+- Filters notes by checking customer_note property (0/false = private, 1/true = customer)
+
 ### 2.0.0
 - **COMPLETE REWRITE: Now uses WooCommerce Order object's get_notes() method**
 - Uses WC_Order_Note objects with customer_note property for accurate filtering
