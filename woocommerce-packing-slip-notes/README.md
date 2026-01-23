@@ -1,0 +1,70 @@
+# WooCommerce Packing Slip Private Notes
+
+Adds private (internal) order notes to WooCommerce packing slips automatically.
+
+## Description
+
+This plugin automatically displays private order notes on your WooCommerce packing slips. Perfect for warehouse staff and fulfillment teams who need to see internal notes when packing orders.
+
+**Key Features:**
+
+- Automatically adds private order notes to packing slips
+- Compatible with "PDF Invoices & Packing Slips for WooCommerce" by WP Overnight
+- Compatible with "WooCommerce Print Invoices/Packing Lists" plugin
+- Configurable display options
+- Clean, professional formatting
+- Only shows internal notes (customer notes are excluded)
+
+## Installation
+
+1. Upload the plugin files to `/wp-content/plugins/woocommerce-packing-slip-notes/`
+2. Activate the plugin through the 'Plugins' menu in WordPress
+3. Configure settings at WooCommerce → Settings → Advanced → Packing Slip Notes
+
+## Requirements
+
+- WordPress 5.0 or higher
+- WooCommerce 5.0 or higher
+- PHP 7.2 or higher
+- A packing slip plugin (recommended: "PDF Invoices & Packing Slips for WooCommerce")
+
+## Configuration
+
+Navigate to **WooCommerce → Settings → Advanced → Packing Slip Notes**
+
+### Settings Options:
+
+- **Enable Private Notes** - Turn the feature on/off
+- **Notes Heading** - Customize the heading text (default: "Internal Notes")
+- **Include Timestamps** - Show when each note was added
+- **Include Author** - Show who added each note
+- **Maximum Notes** - Limit how many notes to display (0 = unlimited)
+
+## Usage
+
+1. Add private notes to any WooCommerce order (avoid checking "Note to customer")
+2. Generate a packing slip for the order
+3. Private notes will automatically appear on the packing slip
+
+**Note:** Only private/internal notes are displayed. Customer-facing notes are automatically excluded.
+
+## Compatible Plugins
+
+- PDF Invoices & Packing Slips for WooCommerce (by WP Overnight)
+- WooCommerce Print Invoices/Packing Lists
+
+## Support
+
+For issues or feature requests, visit: https://github.com/renthemighty/Plugins
+
+## Changelog
+
+### 1.0.0
+- Initial release
+- Support for WooCommerce PDF Invoices & Packing Slips
+- Configurable display options
+- Clean, professional note formatting
+
+## License
+
+GPL v2 or later
