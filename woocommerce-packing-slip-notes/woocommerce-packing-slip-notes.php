@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds ONLY private (internal) order notes to WooCommerce packing slips
- * Version: 2.0.1
+ * Version: 2.0.2
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -123,38 +123,31 @@ class WC_Packing_Slip_Notes {
      * Only returns private/internal notes, excludes customer-facing notes
      */
     private function get_private_notes($order_id) {
-        // Use wc_get_order_notes() function - returns array of stdClass objects
-        // Each note has properties: id, date_created, content, customer_note, etc.
+        // Use wc_get_order_notes() function with type='internal' to get ONLY private notes
         if (!function_exists('wc_get_order_notes')) {
             return [];
         }
 
-        // Get ALL notes first (empty array gets all types)
-        $all_notes = wc_get_order_notes([
+        // Get ONLY internal/private notes by specifying type parameter
+        // type='internal' returns only private notes (not customer-facing)
+        $notes = wc_get_order_notes([
             'order_id' => $order_id,
+            'type'     => 'internal', // THIS is the key - gets ONLY private notes
         ]);
 
-        if (empty($all_notes)) {
+        if (empty($notes)) {
             return [];
         }
 
+        // Convert to format expected by format_notes()
         $private_notes = [];
-
-        foreach ($all_notes as $note) {
-            // $note is a stdClass object with customer_note property
-            // customer_note = 1 or true means it's a customer-facing note
-            // customer_note = 0 or false or empty means it's a private note
-
-            // ONLY include private notes (where customer_note is NOT true/1)
-            if (empty($note->customer_note) || $note->customer_note == 0 || $note->customer_note === false) {
-                // Convert to format expected by format_notes()
-                $private_notes[] = (object)[
-                    'comment_ID' => isset($note->id) ? $note->id : 0,
-                    'comment_content' => isset($note->content) ? $note->content : '',
-                    'comment_date' => isset($note->date_created) && is_object($note->date_created) ? $note->date_created->date('Y-m-d H:i:s') : '',
-                    'user_id' => isset($note->added_by_user) ? 1 : 0,
-                ];
-            }
+        foreach ($notes as $note) {
+            $private_notes[] = (object)[
+                'comment_ID' => isset($note->id) ? $note->id : 0,
+                'comment_content' => isset($note->content) ? $note->content : '',
+                'comment_date' => isset($note->date_created) && is_object($note->date_created) ? $note->date_created->date('Y-m-d H:i:s') : '',
+                'user_id' => isset($note->added_by_user) ? 1 : 0,
+            ];
         }
 
         return $private_notes;

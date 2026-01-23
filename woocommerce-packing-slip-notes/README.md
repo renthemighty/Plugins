@@ -60,6 +60,12 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.0.2
+- **Use type='internal' parameter in wc_get_order_notes() for direct filtering**
+- Simplified to let WooCommerce handle filtering at query level
+- No manual filtering needed - WooCommerce returns only private notes
+- type='internal' excludes all customer-facing notes
+
 ### 2.0.1
 - **FIXED: Use wc_get_order_notes() function instead of $order->get_notes()**
 - Fixed fatal error: Call to undefined method get_notes()
