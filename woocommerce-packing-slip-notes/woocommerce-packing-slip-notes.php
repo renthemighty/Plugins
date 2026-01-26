@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Adds ONLY manually-entered private notes to WooCommerce packing slips (excludes system notes)
- * Version: 2.3.0
+ * Description: Adds ONLY manually-entered private notes to WooCommerce packing slips (excludes system notes) - DEBUG
+ * Version: 2.3.1-debug
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -259,8 +259,16 @@ class WC_Packing_Slip_Notes {
      * Hook: wpo_wcpdf_after_order_details
      */
     public function add_notes_to_packing_slip($type, $order) {
+        // DEBUG: Show what type we're receiving
+        if (isset($_GET['debug_doc_type']) && current_user_can('manage_woocommerce')) {
+            echo '<div style="background: yellow; padding: 10px; border: 2px solid red;">';
+            echo 'Document Type Received: ' . esc_html($type);
+            echo '</div>';
+        }
+
         // Only add to packing slips, not invoices
-        if ($type !== 'packing-slip') {
+        // Check multiple possible values just in case
+        if ($type !== 'packing-slip' && $type !== 'packing_slip') {
             return;
         }
 
