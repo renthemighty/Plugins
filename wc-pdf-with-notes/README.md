@@ -64,6 +64,11 @@ This plugin adds PDF invoice and packing slip generation to WooCommerce with int
 
 ## Changelog
 
+### 1.0.1
+- PDFs now open in new window/tab
+- Added JavaScript to handle new window behavior
+- Improved user experience
+
 ### 1.0.0
 - Initial release
 - PDF generation with note filtering

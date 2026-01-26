@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce PDF Documents with Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Generate PDF invoices and packing slips with proper note filtering (private notes on packing slip, customer notes on invoice)
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -37,6 +37,9 @@ class WC_PDF_With_Notes {
 
         // Hook into existing PDF plugin to add notes
         add_action('wpo_wcpdf_after_order_details', [$this, 'add_notes_to_document'], 10, 2);
+
+        // Add JavaScript to open PDFs in new window
+        add_action('admin_footer', [$this, 'add_new_window_script']);
     }
 
     /**
@@ -45,18 +48,22 @@ class WC_PDF_With_Notes {
     public function add_order_actions($actions, $order) {
         $order_id = is_callable([$order, 'get_id']) ? $order->get_id() : $order->id;
 
-        // Add Packing Slip button
+        // Add Packing Slip button - opens in new window
+        $packing_slip_url = wp_nonce_url(admin_url('admin.php?action=generate_pdf_packing_slip&order_id=' . $order_id), 'generate_pdf_packing_slip');
         $actions['pdf_packing_slip'] = [
-            'url'    => wp_nonce_url(admin_url('admin.php?action=generate_pdf_packing_slip&order_id=' . $order_id), 'generate_pdf_packing_slip'),
+            'url'    => $packing_slip_url,
             'name'   => __('Packing Slip', 'wc-pdf-with-notes'),
             'action' => 'view_packing_slip',
+            'target' => '_blank',
         ];
 
-        // Add Invoice button
+        // Add Invoice button - opens in new window
+        $invoice_url = wp_nonce_url(admin_url('admin.php?action=generate_pdf_invoice&order_id=' . $order_id), 'generate_pdf_invoice');
         $actions['pdf_invoice'] = [
-            'url'    => wp_nonce_url(admin_url('admin.php?action=generate_pdf_invoice&order_id=' . $order_id), 'generate_pdf_invoice'),
+            'url'    => $invoice_url,
             'name'   => __('Invoice', 'wc-pdf-with-notes'),
             'action' => 'view_invoice',
+            'target' => '_blank',
         ];
 
         return $actions;
@@ -206,6 +213,27 @@ class WC_PDF_With_Notes {
             <?php endforeach; ?>
         </div>
         <?php
+    }
+
+    /**
+     * Add JavaScript to open PDF links in new window
+     */
+    public function add_new_window_script() {
+        $screen = get_current_screen();
+        if ($screen && ($screen->id === 'edit-shop_order' || $screen->id === 'woocommerce_page_wc-orders')) {
+            ?>
+            <script type="text/javascript">
+            jQuery(document).ready(function($) {
+                // Make PDF action buttons open in new window
+                $('.view_packing_slip, .view_invoice').on('click', function(e) {
+                    e.preventDefault();
+                    window.open($(this).attr('href'), '_blank');
+                    return false;
+                });
+            });
+            </script>
+            <?php
+        }
     }
 
     /**
