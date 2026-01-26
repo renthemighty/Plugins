@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Packing Slip Private Notes
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Adds ONLY manually-entered private notes to WooCommerce packing slips (excludes system notes) - DEBUG
- * Version: 2.3.1-debug
+ * Description: Adds ONLY manually-entered private notes to WooCommerce packing slips (excludes system notes)
+ * Version: 2.4.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -120,58 +120,14 @@ class WC_Packing_Slip_Notes {
 
     /**
      * Get private notes for an order using direct database query
-     * Only returns private/internal notes, excludes customer-facing notes
+     * Only returns manually-entered private notes
+     * Excludes: customer notes AND system-generated notes
      */
     private function get_private_notes($order_id) {
         global $wpdb;
 
-        // DEBUG MODE: Get ALL notes with ALL their meta to see what we're dealing with
-        if (isset($_GET['debug_packing_notes']) && current_user_can('manage_woocommerce')) {
-            $all_notes_query = $wpdb->prepare("
-                SELECT c.comment_ID, c.comment_content, c.comment_date
-                FROM {$wpdb->comments} c
-                WHERE c.comment_post_ID = %d
-                AND c.comment_type = 'order_note'
-                ORDER BY c.comment_date_gmt DESC
-            ", $order_id);
-
-            $all_notes = $wpdb->get_results($all_notes_query);
-
-            echo '<div style="background: yellow; padding: 20px; margin: 20px; border: 3px solid red; font-family: monospace; font-size: 11px;">';
-            echo '<h2>DEBUG: All Order Notes Meta Analysis</h2>';
-
-            foreach ($all_notes as $note) {
-                echo '<div style="border: 1px solid black; padding: 10px; margin: 10px 0; background: white;">';
-                echo '<strong>Note ID:</strong> ' . $note->comment_ID . '<br>';
-                echo '<strong>Content:</strong> ' . esc_html(substr($note->comment_content, 0, 100)) . '<br>';
-
-                // Get ALL meta for this note
-                $meta_query = $wpdb->prepare("
-                    SELECT meta_key, meta_value
-                    FROM {$wpdb->commentmeta}
-                    WHERE comment_id = %d
-                ", $note->comment_ID);
-
-                $all_meta = $wpdb->get_results($meta_query);
-
-                if (!empty($all_meta)) {
-                    echo '<strong>META:</strong><br>';
-                    foreach ($all_meta as $meta) {
-                        echo '&nbsp;&nbsp;' . esc_html($meta->meta_key) . ' = ' . var_export($meta->meta_value, true) . '<br>';
-                    }
-                } else {
-                    echo '<strong>META:</strong> NO META FOUND<br>';
-                }
-
-                echo '</div>';
-            }
-
-            echo '</div>';
-        }
-
         // Query for ONLY manually-entered private notes
-        // Exclude: customer notes AND system-generated notes
-        // System notes usually have user_id = 0 (added by system, not manually)
+        // Exclude: customer notes (is_customer_note = 1) AND system-generated notes (user_id = 0)
         // Manual private notes have user_id > 0 (added by staff)
         $query = $wpdb->prepare("
             SELECT c.comment_ID, c.comment_content, c.comment_date, c.user_id
@@ -259,17 +215,17 @@ class WC_Packing_Slip_Notes {
      * Hook: wpo_wcpdf_after_order_details
      */
     public function add_notes_to_packing_slip($type, $order) {
-        // DEBUG: Show what type we're receiving
-        if (isset($_GET['debug_doc_type']) && current_user_can('manage_woocommerce')) {
-            echo '<div style="background: yellow; padding: 10px; border: 2px solid red;">';
-            echo 'Document Type Received: ' . esc_html($type);
-            echo '</div>';
-        }
-
-        // Only add to packing slips, not invoices
-        // Check multiple possible values just in case
-        if ($type !== 'packing-slip' && $type !== 'packing_slip') {
-            return;
+        // Get the document object to check type more reliably
+        if (function_exists('wcpdf_get_document')) {
+            $document = wcpdf_get_document($type, $order);
+            if (!$document || $document->get_type() !== 'packing-slip') {
+                return;
+            }
+        } else {
+            // Fallback to string comparison
+            if ($type !== 'packing-slip' && $type !== 'packing_slip') {
+                return;
+            }
         }
 
         $order_id = is_callable([$order, 'get_id']) ? $order->get_id() : $order->id;

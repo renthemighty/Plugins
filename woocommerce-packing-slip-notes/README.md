@@ -60,6 +60,12 @@ For issues or feature requests, visit: https://github.com/renthemighty/Plugins
 
 ## Changelog
 
+### 2.4.0
+- **FIXED: Only show notes on packing slips, not invoices**
+- Use wcpdf_get_document() and get_type() for reliable document type checking
+- Removed debug code for cleaner production version
+- Properly filters to only packing-slip document type
+
 ### 2.3.0
 - **FIXED: Exclude system-generated notes, only show manually-entered private notes**
 - Added filter: user_id > 0 (manual notes) vs user_id = 0 (system notes)
