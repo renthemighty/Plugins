@@ -44,8 +44,6 @@ class WC_Quantity_Text {
     private function __construct() {
         // Admin
         add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
-        add_action( 'admin_init', [ $this, 'register_settings' ] );
-        add_action( 'admin_enqueue_scripts', [ $this, 'admin_scripts' ] );
         add_action( 'wp_ajax_wc_quantity_text_save', [ $this, 'ajax_save_mappings' ] );
 
         // Frontend
@@ -92,13 +90,6 @@ class WC_Quantity_Text {
         );
     }
 
-    public function register_settings() {
-        register_setting( 'wc_quantity_text_group', self::OPTION_KEY, [
-            'type'              => 'array',
-            'sanitize_callback' => [ $this, 'sanitize_mappings' ],
-        ] );
-    }
-
     public function sanitize_mappings( $input ) {
         $clean = [];
         if ( is_array( $input ) ) {
@@ -111,113 +102,6 @@ class WC_Quantity_Text {
             }
         }
         return $clean;
-    }
-
-    public function admin_scripts( $hook ) {
-        if ( 'woocommerce_page_wc-quantity-text' !== $hook ) {
-            return;
-        }
-
-        wp_enqueue_style(
-            'wc-quantity-text-admin',
-            false
-        );
-
-        // Inline CSS for the admin page
-        wp_add_inline_style( 'wc-quantity-text-admin', $this->get_admin_css() );
-
-        wp_enqueue_script(
-            'wc-quantity-text-admin',
-            false
-        );
-
-        // Inline JS
-        wp_add_inline_script( 'wc-quantity-text-admin', $this->get_admin_js() );
-
-        wp_localize_script( 'wc-quantity-text-admin', 'wcqt', [
-            'ajax_url' => admin_url( 'admin-ajax.php' ),
-            'nonce'    => wp_create_nonce( 'wc_quantity_text_save' ),
-        ] );
-    }
-
-    private function get_admin_css() {
-        return '
-            .wcqt-wrap { max-width: 800px; }
-            .wcqt-row { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
-            .wcqt-row select { min-width: 250px; }
-            .wcqt-row input[type="text"] { flex: 1; min-width: 200px; }
-            .wcqt-row .button-link-delete { color: #b32d2e; cursor: pointer; text-decoration: none; padding: 4px 8px; }
-            .wcqt-row .button-link-delete:hover { color: #a00; }
-            .wcqt-notice { display: none; padding: 10px 14px; margin: 10px 0; border-left: 4px solid #00a32a; background: #fff; }
-            .wcqt-notice.error { border-left-color: #d63638; }
-            .wcqt-actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
-        ';
-    }
-
-    private function get_admin_js() {
-        return "
-        document.addEventListener('DOMContentLoaded', function() {
-            var wrap = document.getElementById('wcqt-mappings');
-            var tmpl = document.getElementById('wcqt-row-template');
-            if (!wrap || !tmpl) return;
-
-            document.getElementById('wcqt-add-row').addEventListener('click', function(e) {
-                e.preventDefault();
-                var clone = tmpl.content.cloneNode(true);
-                wrap.appendChild(clone);
-                bindRemoveButtons();
-            });
-
-            function bindRemoveButtons() {
-                wrap.querySelectorAll('.wcqt-remove').forEach(function(btn) {
-                    btn.onclick = function(e) {
-                        e.preventDefault();
-                        this.closest('.wcqt-row').remove();
-                    };
-                });
-            }
-            bindRemoveButtons();
-
-            document.getElementById('wcqt-save').addEventListener('click', function(e) {
-                e.preventDefault();
-                var rows = wrap.querySelectorAll('.wcqt-row');
-                var mappings = {};
-                rows.forEach(function(row) {
-                    var sel  = row.querySelector('select');
-                    var inp  = row.querySelector('input[type=\"text\"]');
-                    if (sel && inp && sel.value && inp.value.trim()) {
-                        mappings[sel.value] = inp.value.trim();
-                    }
-                });
-
-                var btn = document.getElementById('wcqt-save');
-                btn.disabled = true;
-                btn.value = 'Saving...';
-
-                var xhr = new XMLHttpRequest();
-                xhr.open('POST', wcqt.ajax_url);
-                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
-                xhr.onload = function() {
-                    btn.disabled = false;
-                    btn.value = 'Save Changes';
-                    var notice = document.getElementById('wcqt-notice');
-                    if (xhr.status === 200) {
-                        var res = JSON.parse(xhr.responseText);
-                        if (res.success) {
-                            notice.textContent = 'Settings saved.';
-                            notice.className = 'wcqt-notice';
-                            notice.style.display = 'block';
-                        } else {
-                            notice.textContent = 'Error saving settings.';
-                            notice.className = 'wcqt-notice error';
-                            notice.style.display = 'block';
-                        }
-                    }
-                };
-                xhr.send('action=wc_quantity_text_save&nonce=' + wcqt.nonce + '&mappings=' + encodeURIComponent(JSON.stringify(mappings)));
-            });
-        });
-        ";
     }
 
     public function ajax_save_mappings() {
@@ -248,6 +132,18 @@ class WC_Quantity_Text {
         }
 
         ?>
+        <style>
+            .wcqt-wrap { max-width: 800px; }
+            .wcqt-row { display: flex; gap: 12px; align-items: center; margin-bottom: 10px; }
+            .wcqt-row select { min-width: 250px; }
+            .wcqt-row input[type="text"] { flex: 1; min-width: 200px; }
+            .wcqt-row .button-link-delete { color: #b32d2e; cursor: pointer; text-decoration: none; padding: 4px 8px; font-size: 18px; line-height: 1; }
+            .wcqt-row .button-link-delete:hover { color: #a00; }
+            .wcqt-notice { display: none; padding: 10px 14px; margin: 10px 0; border-left: 4px solid #00a32a; background: #fff; }
+            .wcqt-notice.wcqt-error { border-left-color: #d63638; }
+            .wcqt-actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
+        </style>
+
         <div class="wrap wcqt-wrap">
             <h1><?php esc_html_e( 'Quantity Text per Category', 'woocommerce-quantity-text' ); ?></h1>
             <p><?php esc_html_e( 'Assign text that appears above the quantity selector for products in each category.', 'woocommerce-quantity-text' ); ?></p>
@@ -293,6 +189,83 @@ class WC_Quantity_Text {
                 <input type="submit" id="wcqt-save" class="button button-primary" value="<?php esc_attr_e( 'Save Changes', 'woocommerce-quantity-text' ); ?>" />
             </div>
         </div>
+
+        <script>
+        (function() {
+            var ajaxUrl = <?php echo wp_json_encode( admin_url( 'admin-ajax.php' ) ); ?>;
+            var nonce   = <?php echo wp_json_encode( wp_create_nonce( 'wc_quantity_text_save' ) ); ?>;
+
+            var wrap = document.getElementById('wcqt-mappings');
+            var tmpl = document.getElementById('wcqt-row-template');
+            if (!wrap || !tmpl) return;
+
+            document.getElementById('wcqt-add-row').addEventListener('click', function(e) {
+                e.preventDefault();
+                var clone = tmpl.content.cloneNode(true);
+                wrap.appendChild(clone);
+                bindRemoveButtons();
+            });
+
+            function bindRemoveButtons() {
+                wrap.querySelectorAll('.wcqt-remove').forEach(function(btn) {
+                    btn.onclick = function(e) {
+                        e.preventDefault();
+                        this.closest('.wcqt-row').remove();
+                    };
+                });
+            }
+            bindRemoveButtons();
+
+            document.getElementById('wcqt-save').addEventListener('click', function(e) {
+                e.preventDefault();
+                var rows = wrap.querySelectorAll('.wcqt-row');
+                var mappings = {};
+                rows.forEach(function(row) {
+                    var sel = row.querySelector('select');
+                    var inp = row.querySelector('input[type="text"]');
+                    if (sel && inp && sel.value && inp.value.trim()) {
+                        mappings[sel.value] = inp.value.trim();
+                    }
+                });
+
+                var btn = document.getElementById('wcqt-save');
+                btn.disabled = true;
+                btn.value = 'Saving\u2026';
+
+                var xhr = new XMLHttpRequest();
+                xhr.open('POST', ajaxUrl);
+                xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+                xhr.onload = function() {
+                    btn.disabled = false;
+                    btn.value = <?php echo wp_json_encode( __( 'Save Changes', 'woocommerce-quantity-text' ) ); ?>;
+                    var notice = document.getElementById('wcqt-notice');
+                    try {
+                        var res = JSON.parse(xhr.responseText);
+                        if (xhr.status === 200 && res.success) {
+                            notice.textContent = <?php echo wp_json_encode( __( 'Settings saved.', 'woocommerce-quantity-text' ) ); ?>;
+                            notice.className = 'wcqt-notice';
+                        } else {
+                            notice.textContent = <?php echo wp_json_encode( __( 'Error saving settings.', 'woocommerce-quantity-text' ) ); ?>;
+                            notice.className = 'wcqt-notice wcqt-error';
+                        }
+                    } catch (err) {
+                        notice.textContent = <?php echo wp_json_encode( __( 'Error saving settings.', 'woocommerce-quantity-text' ) ); ?>;
+                        notice.className = 'wcqt-notice wcqt-error';
+                    }
+                    notice.style.display = 'block';
+                };
+                xhr.onerror = function() {
+                    btn.disabled = false;
+                    btn.value = <?php echo wp_json_encode( __( 'Save Changes', 'woocommerce-quantity-text' ) ); ?>;
+                    var notice = document.getElementById('wcqt-notice');
+                    notice.textContent = <?php echo wp_json_encode( __( 'Network error. Please try again.', 'woocommerce-quantity-text' ) ); ?>;
+                    notice.className = 'wcqt-notice wcqt-error';
+                    notice.style.display = 'block';
+                };
+                xhr.send('action=wc_quantity_text_save&nonce=' + encodeURIComponent(nonce) + '&mappings=' + encodeURIComponent(JSON.stringify(mappings)));
+            });
+        })();
+        </script>
         <?php
     }
 
@@ -307,6 +280,13 @@ class WC_Quantity_Text {
      * immediately before the <input type="number"> inside the quantity wrapper.
      */
     public function display_quantity_text() {
+        // Only run on single product pages where global $product is reliable.
+        // On the cart page this hook also fires, but global $product is stale
+        // and get_the_ID() returns the cart page ID — not a product.
+        if ( ! is_product() ) {
+            return;
+        }
+
         global $product;
 
         if ( ! $product instanceof WC_Product ) {
