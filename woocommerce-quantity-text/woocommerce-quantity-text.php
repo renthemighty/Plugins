@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Quantity Text
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds custom text above the quantity selector on product pages, configurable per product category (e.g. "Pack of 10", "Sold by the pound").
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -361,11 +361,9 @@ class WC_Quantity_Text {
             var DONE = 'data-wcqt-done';
 
             function isQuantityWord(s) {
-                s = s.trim().toLowerCase()
-                     .replace(/\s+quantity$/i, '')   // "{Product Name} quantity"
-                     .trim();
+                s = s.trim().replace(/:$/, '').trim().toLowerCase();
                 return /^(quantity|qty\.?|product quantity)$/i.test(s)
-                    || /quantity$/i.test(s);          // "Some Product quantity"
+                    || /quantity$/i.test(s);
             }
 
             function apply() {
@@ -379,70 +377,61 @@ class WC_Quantity_Text {
                     var wrapper = input.closest('.quantity') || input.parentNode;
                     if (!wrapper || wrapper.getAttribute(DONE)) continue;
 
-                    // --- Strategy 1: label INSIDE the wrapper ---
-                    var label = wrapper.querySelector('label');
-                    if (label) {
-                        label.textContent = newText;
-                        label.className = 'wc-quantity-text';
-                        wrapper.setAttribute(DONE, '1');
-                        continue;
-                    }
+                    // Do NOT touch labels INSIDE .quantity — those are
+                    // screen-reader-only labels that should stay hidden.
+                    // Instead, look OUTSIDE the wrapper for the visible
+                    // "Quantity:" text that themes render above the controls.
 
-                    // --- Strategy 2: label linked by "for" attribute ---
-                    var inputId = input.id;
-                    if (inputId) {
-                        var linked = document.querySelector('label[for="' + inputId + '"]');
-                        if (linked) {
-                            linked.textContent = newText;
-                            linked.className = 'wc-quantity-text';
-                            wrapper.setAttribute(DONE, '1');
-                            continue;
-                        }
-                    }
+                    var replaced = false;
 
-                    // --- Strategy 3: scan siblings & parent for "Quantity" text ---
-                    var parent = wrapper.parentNode;
-                    if (parent) {
-                        var found = false;
-                        var kids = parent.children;
+                    // --- Strategy 1: scan ancestors up to form for "Quantity" text ---
+                    // Walk from the wrapper's parent up through ancestors (stopping
+                    // at the form) and check each level's direct children.
+                    var ancestor = wrapper.parentNode;
+                    var form = input.closest('form') || document.querySelector('form.cart');
+                    var ceiling = form ? form.parentNode : document.body;
+
+                    while (ancestor && ancestor !== ceiling) {
+                        var kids = ancestor.children;
                         for (var j = 0; j < kids.length; j++) {
                             var kid = kids[j];
-                            if (kid === wrapper) continue;
+                            // Skip the wrapper itself and any container holding it.
+                            if (kid.contains(wrapper)) continue;
                             if (kid.getAttribute(DONE)) continue;
-                            if (isQuantityWord(kid.textContent)) {
+                            if (isQuantityWord(kid.textContent) && kid.children.length === 0) {
                                 kid.textContent = newText;
-                                kid.className = 'wc-quantity-text';
                                 kid.setAttribute(DONE, '1');
                                 wrapper.setAttribute(DONE, '1');
-                                found = true;
+                                replaced = true;
                                 break;
                             }
                         }
-                        if (found) continue;
+                        if (replaced) break;
+                        ancestor = ancestor.parentNode;
                     }
+                    if (replaced) continue;
 
-                    // --- Strategy 4: broad scan inside form.cart ---
-                    var form = input.closest('form');
+                    // --- Strategy 2: broad scan inside form ---
                     if (form) {
-                        var els = form.querySelectorAll('label, th, .quantity-label, span, p, div');
-                        var found2 = false;
+                        var els = form.querySelectorAll('label, th, span, p, div, h1, h2, h3, h4, h5, h6');
                         for (var k = 0; k < els.length; k++) {
                             var el = els[k];
+                            // Skip anything inside .quantity (screen-reader labels).
+                            if (wrapper.contains(el)) continue;
                             if (el.getAttribute(DONE)) continue;
-                            if (el.children.length > 0) continue; // only leaf nodes
+                            if (el.children.length > 0) continue;
                             if (isQuantityWord(el.textContent)) {
                                 el.textContent = newText;
-                                el.className = 'wc-quantity-text';
                                 el.setAttribute(DONE, '1');
                                 wrapper.setAttribute(DONE, '1');
-                                found2 = true;
+                                replaced = true;
                                 break;
                             }
                         }
-                        if (found2) continue;
                     }
+                    if (replaced) continue;
 
-                    // --- Strategy 5: nothing found — inject above the wrapper ---
+                    // --- Strategy 3: nothing found — inject above the wrapper ---
                     var span = document.createElement('span');
                     span.className = 'wc-quantity-text';
                     span.textContent = newText;
