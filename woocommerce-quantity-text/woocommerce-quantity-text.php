@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Quantity Text
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds custom text above the quantity selector on product pages, configurable per product category (e.g. "Pack of 10", "Sold by the pound").
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -308,15 +308,17 @@ class WC_Quantity_Text {
     // =========================================================================
 
     /**
-     * Output an inline script on single product pages that finds the existing
-     * "Quantity" label/text rendered by any theme and replaces it with the
-     * category-specific text from our settings.
+     * Output inline CSS + JS on single product pages.
      *
-     * This works on every theme because:
-     *  - It operates on the rendered DOM, not PHP template hooks.
-     *  - Every WooCommerce theme renders a label, heading, or visible text
-     *    containing "Quantity" near the quantity input. We find it and swap it.
-     *  - A MutationObserver re-applies after AJAX variation switches.
+     * Anchors on input[name="quantity"] which exists on every WooCommerce
+     * theme regardless of template overrides, then works outward to find
+     * and replace the "Quantity" label. Covers:
+     *  - Labels inside .quantity (Storefront, Astra, OceanWP)
+     *  - Labels with screen-reader-text (core WooCommerce default)
+     *  - Flatsome's custom quantity wrapper and visible labels
+     *  - Elementor Pro add-to-cart widget
+     *  - Woodmart's custom quantity template
+     *  - Any other theme: broad text-node scan as final fallback
      */
     public function frontend_script() {
         if ( ! is_product() ) {
@@ -339,73 +341,139 @@ class WC_Quantity_Text {
         }
 
         ?>
-        <style>.wc-quantity-text{display:block;margin-bottom:4px;font-weight:600}</style>
+        <style>
+        .wc-quantity-text {
+            display: block !important;
+            position: static !important;
+            width: auto !important;
+            height: auto !important;
+            overflow: visible !important;
+            clip: auto !important;
+            clip-path: none !important;
+            margin-bottom: 6px !important;
+            font-weight: 600;
+            font-size: .95em;
+        }
+        </style>
         <script>
         (function() {
-            var text = <?php echo wp_json_encode( $text ); ?>;
+            var newText = <?php echo wp_json_encode( $text ); ?>;
+            var DONE = 'data-wcqt-done';
+
+            function isQuantityWord(s) {
+                s = s.trim().toLowerCase()
+                     .replace(/\s+quantity$/i, '')   // "{Product Name} quantity"
+                     .trim();
+                return /^(quantity|qty\.?|product quantity)$/i.test(s)
+                    || /quantity$/i.test(s);          // "Some Product quantity"
+            }
 
             function apply() {
-                // 1. Find quantity containers on the product page.
-                var containers = document.querySelectorAll(
-                    'form.cart .quantity, .single-product .quantity, .product .quantity'
-                );
+                // Anchor: find every quantity input on the page.
+                var inputs = document.querySelectorAll('input[name="quantity"]');
 
-                for (var i = 0; i < containers.length; i++) {
-                    var el = containers[i];
+                for (var i = 0; i < inputs.length; i++) {
+                    var input = inputs[i];
 
-                    // Skip if we already replaced in this container.
-                    if (el.getAttribute('data-wcqt')) continue;
-                    el.setAttribute('data-wcqt', '1');
+                    // Walk up to the .quantity wrapper (or direct parent).
+                    var wrapper = input.closest('.quantity') || input.parentNode;
+                    if (!wrapper || wrapper.getAttribute(DONE)) continue;
 
-                    // 2. Look for an existing label inside the .quantity wrapper
-                    //    (every theme renders one — often hidden with screen-reader-text).
-                    var label = el.querySelector('label');
+                    // --- Strategy 1: label INSIDE the wrapper ---
+                    var label = wrapper.querySelector('label');
                     if (label) {
-                        label.textContent = text;
-                        // Make it visible if the theme hid it.
-                        label.classList.remove('screen-reader-text');
-                        label.classList.add('wc-quantity-text');
+                        label.textContent = newText;
+                        label.className = 'wc-quantity-text';
+                        wrapper.setAttribute(DONE, '1');
                         continue;
                     }
 
-                    // 3. No label found — inject a span before the first child.
+                    // --- Strategy 2: label linked by "for" attribute ---
+                    var inputId = input.id;
+                    if (inputId) {
+                        var linked = document.querySelector('label[for="' + inputId + '"]');
+                        if (linked) {
+                            linked.textContent = newText;
+                            linked.className = 'wc-quantity-text';
+                            wrapper.setAttribute(DONE, '1');
+                            continue;
+                        }
+                    }
+
+                    // --- Strategy 3: scan siblings & parent for "Quantity" text ---
+                    var parent = wrapper.parentNode;
+                    if (parent) {
+                        var found = false;
+                        var kids = parent.children;
+                        for (var j = 0; j < kids.length; j++) {
+                            var kid = kids[j];
+                            if (kid === wrapper) continue;
+                            if (kid.getAttribute(DONE)) continue;
+                            if (isQuantityWord(kid.textContent)) {
+                                kid.textContent = newText;
+                                kid.className = 'wc-quantity-text';
+                                kid.setAttribute(DONE, '1');
+                                wrapper.setAttribute(DONE, '1');
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) continue;
+                    }
+
+                    // --- Strategy 4: broad scan inside form.cart ---
+                    var form = input.closest('form');
+                    if (form) {
+                        var els = form.querySelectorAll('label, th, .quantity-label, span, p, div');
+                        var found2 = false;
+                        for (var k = 0; k < els.length; k++) {
+                            var el = els[k];
+                            if (el.getAttribute(DONE)) continue;
+                            if (el.children.length > 0) continue; // only leaf nodes
+                            if (isQuantityWord(el.textContent)) {
+                                el.textContent = newText;
+                                el.className = 'wc-quantity-text';
+                                el.setAttribute(DONE, '1');
+                                wrapper.setAttribute(DONE, '1');
+                                found2 = true;
+                                break;
+                            }
+                        }
+                        if (found2) continue;
+                    }
+
+                    // --- Strategy 5: nothing found — inject above the wrapper ---
                     var span = document.createElement('span');
                     span.className = 'wc-quantity-text';
-                    span.textContent = text;
-                    el.insertBefore(span, el.firstChild);
-                }
-
-                // 4. Also check for "Quantity" text in nearby headings / labels
-                //    that some themes render OUTSIDE the .quantity div
-                //    (e.g. a <label> or <th> next to the quantity wrapper).
-                var form = document.querySelector('form.cart');
-                if (!form) return;
-
-                var labels = form.querySelectorAll('label, .quantity-label, th');
-                for (var j = 0; j < labels.length; j++) {
-                    var lbl = labels[j];
-                    if (lbl.getAttribute('data-wcqt')) continue;
-                    var txt = lbl.textContent.trim().toLowerCase();
-                    if (txt === 'quantity' || txt === 'qty' || txt === 'qty.') {
-                        lbl.textContent = text;
-                        lbl.classList.remove('screen-reader-text');
-                        lbl.classList.add('wc-quantity-text');
-                        lbl.setAttribute('data-wcqt', '1');
-                    }
+                    span.textContent = newText;
+                    wrapper.parentNode.insertBefore(span, wrapper);
+                    wrapper.setAttribute(DONE, '1');
                 }
             }
 
-            // Run once on load.
+            // Run on DOM ready.
             if (document.readyState === 'loading') {
                 document.addEventListener('DOMContentLoaded', apply);
             } else {
                 apply();
             }
 
-            // Re-run when variations or AJAX rebuild the quantity field.
-            var form = document.querySelector('form.cart');
-            if (form && typeof MutationObserver !== 'undefined') {
-                new MutationObserver(function() { apply(); }).observe(form, { childList: true, subtree: true });
+            // Re-run on AJAX / variation switches.
+            var obs = typeof MutationObserver !== 'undefined';
+            if (obs) {
+                var target = document.querySelector('form.cart')
+                          || document.querySelector('.product');
+                if (target) {
+                    new MutationObserver(function() { apply(); })
+                        .observe(target, { childList: true, subtree: true });
+                }
+            }
+
+            // Also re-run on WooCommerce variation events (jQuery-based).
+            if (typeof jQuery !== 'undefined') {
+                jQuery(document).on('show_variation reset_data', 'form.variations_form', function() {
+                    setTimeout(apply, 100);
+                });
             }
         })();
         </script>
