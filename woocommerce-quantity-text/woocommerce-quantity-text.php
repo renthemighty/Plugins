@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Quantity Text
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Adds custom text above the quantity selector on product pages, configurable per product category (e.g. "Pack of 10", "Sold by the pound").
- * Version: 1.1.0
+ * Version: 1.3.0
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -34,12 +34,6 @@ class WC_Quantity_Text {
      */
     private $mappings = null;
 
-    /**
-     * Tracks whether the PHP hook already rendered the text for this product,
-     * so the secondary hook and JS fallback don't duplicate it.
-     */
-    private $rendered = false;
-
     public static function instance() {
         if ( null === self::$instance ) {
             self::$instance = new self();
@@ -52,25 +46,15 @@ class WC_Quantity_Text {
         add_action( 'admin_menu', [ $this, 'add_admin_menu' ] );
         add_action( 'wp_ajax_wc_quantity_text_save', [ $this, 'ajax_save_mappings' ] );
 
-        // Frontend — two PHP hooks + JS fallback for maximum theme compatibility.
+        // Frontend — JavaScript-based replacement that works on ALL themes.
         //
-        // Hook 1: woocommerce_before_add_to_cart_quantity (WC 2.7+)
-        //   Fires from the add-to-cart templates (simple.php, variable, grouped).
-        //   Works even when a theme overrides quantity-input.php but keeps the
-        //   add-to-cart template hooks intact.
-        //
-        // Hook 2: woocommerce_before_quantity_input_field (WC 7.2+)
-        //   Fires inside quantity-input.php right before the <input>.
-        //   Works on themes that don't override that template (Storefront, Astra, etc.)
-        //   Skipped if Hook 1 already rendered.
-        //
-        // Hook 3: JS fallback via wp_footer
-        //   Catches themes that override BOTH templates and strip both hooks
-        //   (older Flatsome, older Woodmart, heavily customised themes).
-        //   Skipped if either PHP hook already rendered.
-        add_action( 'woocommerce_before_add_to_cart_quantity', [ $this, 'display_quantity_text' ] );
-        add_action( 'woocommerce_before_quantity_input_field', [ $this, 'display_quantity_text_secondary' ] );
-        add_action( 'wp_footer', [ $this, 'js_fallback' ] );
+        // Many themes (Flatsome, Woodmart, Elementor, etc.) override the
+        // WooCommerce quantity templates and strip the PHP action hooks.
+        // Instead of injecting new HTML, we replace the existing "Quantity"
+        // label text that every theme already renders. This is done via a
+        // small inline script on product pages — guaranteed to work
+        // regardless of which templates or page builders are in use.
+        add_action( 'wp_footer', [ $this, 'frontend_script' ] );
     }
 
     // =========================================================================
@@ -320,104 +304,23 @@ class WC_Quantity_Text {
     }
 
     // =========================================================================
-    // Frontend — PHP hooks
+    // Frontend
     // =========================================================================
 
     /**
-     * PRIMARY HOOK — woocommerce_before_add_to_cart_quantity (WC 2.7+)
+     * Output inline CSS + JS on single product pages.
      *
-     * Fires from the add-to-cart form templates (simple.php, variable, grouped).
-     * This hook only fires on product pages so no is_product() guard needed.
-     * It lives OUTSIDE quantity-input.php, so it works even when themes like
-     * Flatsome/Woodmart override that template with older copies that strip
-     * the inner hooks.
+     * Anchors on input[name="quantity"] which exists on every WooCommerce
+     * theme regardless of template overrides, then works outward to find
+     * and replace the "Quantity" label. Covers:
+     *  - Labels inside .quantity (Storefront, Astra, OceanWP)
+     *  - Labels with screen-reader-text (core WooCommerce default)
+     *  - Flatsome's custom quantity wrapper and visible labels
+     *  - Elementor Pro add-to-cart widget
+     *  - Woodmart's custom quantity template
+     *  - Any other theme: broad text-node scan as final fallback
      */
-    public function display_quantity_text() {
-        global $product;
-
-        if ( ! $product instanceof WC_Product ) {
-            $product = wc_get_product( get_the_ID() );
-        }
-
-        if ( ! $product ) {
-            return;
-        }
-
-        $text = $this->get_text_for_product( $product );
-        if ( $text === '' ) {
-            return;
-        }
-
-        $this->rendered = true;
-
-        printf(
-            '<span class="wc-quantity-text" style="display:block">%s</span>',
-            esc_html( $text )
-        );
-    }
-
-    /**
-     * SECONDARY HOOK — woocommerce_before_quantity_input_field (WC 7.2+)
-     *
-     * Fires inside quantity-input.php right before the <input>.
-     * Only renders if the primary hook didn't already (the primary hook lives
-     * in the add-to-cart template, which some builders skip entirely).
-     * Guarded by is_product() because this hook also fires on the cart page.
-     */
-    public function display_quantity_text_secondary() {
-        if ( $this->rendered ) {
-            return;
-        }
-
-        if ( ! is_product() ) {
-            return;
-        }
-
-        global $product;
-
-        if ( ! $product instanceof WC_Product ) {
-            $product = wc_get_product( get_the_ID() );
-        }
-
-        if ( ! $product ) {
-            return;
-        }
-
-        $text = $this->get_text_for_product( $product );
-        if ( $text === '' ) {
-            return;
-        }
-
-        $this->rendered = true;
-
-        printf(
-            '<span class="wc-quantity-text" style="display:block">%s</span>',
-            esc_html( $text )
-        );
-    }
-
-    // =========================================================================
-    // Frontend — JS fallback
-    // =========================================================================
-
-    /**
-     * FALLBACK — JavaScript injection via wp_footer.
-     *
-     * Catches themes that override BOTH the add-to-cart templates AND
-     * quantity-input.php with copies that strip both hooks (older Flatsome,
-     * older Woodmart, heavily customised themes).
-     *
-     * Skips output entirely if either PHP hook already rendered, or if the
-     * product has no matching category text.
-     *
-     * Uses a MutationObserver so it also handles AJAX variation switches
-     * that rebuild the quantity field dynamically.
-     */
-    public function js_fallback() {
-        if ( $this->rendered ) {
-            return;
-        }
-
+    public function frontend_script() {
         if ( ! is_product() ) {
             return;
         }
@@ -438,33 +341,139 @@ class WC_Quantity_Text {
         }
 
         ?>
+        <style>
+        .wc-quantity-text {
+            display: block !important;
+            position: static !important;
+            width: auto !important;
+            height: auto !important;
+            overflow: visible !important;
+            clip: auto !important;
+            clip-path: none !important;
+            margin-bottom: 6px !important;
+            font-weight: 600;
+            font-size: .95em;
+        }
+        </style>
         <script>
         (function() {
-            var text = <?php echo wp_json_encode( $text ); ?>;
+            var newText = <?php echo wp_json_encode( $text ); ?>;
+            var DONE = 'data-wcqt-done';
 
-            function inject() {
-                var containers = document.querySelectorAll('form.cart .quantity, .single-product .quantity');
-                for (var i = 0; i < containers.length; i++) {
-                    if (containers[i].querySelector('.wc-quantity-text')) continue;
+            function isQuantityWord(s) {
+                s = s.trim().toLowerCase()
+                     .replace(/\s+quantity$/i, '')   // "{Product Name} quantity"
+                     .trim();
+                return /^(quantity|qty\.?|product quantity)$/i.test(s)
+                    || /quantity$/i.test(s);          // "Some Product quantity"
+            }
+
+            function apply() {
+                // Anchor: find every quantity input on the page.
+                var inputs = document.querySelectorAll('input[name="quantity"]');
+
+                for (var i = 0; i < inputs.length; i++) {
+                    var input = inputs[i];
+
+                    // Walk up to the .quantity wrapper (or direct parent).
+                    var wrapper = input.closest('.quantity') || input.parentNode;
+                    if (!wrapper || wrapper.getAttribute(DONE)) continue;
+
+                    // --- Strategy 1: label INSIDE the wrapper ---
+                    var label = wrapper.querySelector('label');
+                    if (label) {
+                        label.textContent = newText;
+                        label.className = 'wc-quantity-text';
+                        wrapper.setAttribute(DONE, '1');
+                        continue;
+                    }
+
+                    // --- Strategy 2: label linked by "for" attribute ---
+                    var inputId = input.id;
+                    if (inputId) {
+                        var linked = document.querySelector('label[for="' + inputId + '"]');
+                        if (linked) {
+                            linked.textContent = newText;
+                            linked.className = 'wc-quantity-text';
+                            wrapper.setAttribute(DONE, '1');
+                            continue;
+                        }
+                    }
+
+                    // --- Strategy 3: scan siblings & parent for "Quantity" text ---
+                    var parent = wrapper.parentNode;
+                    if (parent) {
+                        var found = false;
+                        var kids = parent.children;
+                        for (var j = 0; j < kids.length; j++) {
+                            var kid = kids[j];
+                            if (kid === wrapper) continue;
+                            if (kid.getAttribute(DONE)) continue;
+                            if (isQuantityWord(kid.textContent)) {
+                                kid.textContent = newText;
+                                kid.className = 'wc-quantity-text';
+                                kid.setAttribute(DONE, '1');
+                                wrapper.setAttribute(DONE, '1');
+                                found = true;
+                                break;
+                            }
+                        }
+                        if (found) continue;
+                    }
+
+                    // --- Strategy 4: broad scan inside form.cart ---
+                    var form = input.closest('form');
+                    if (form) {
+                        var els = form.querySelectorAll('label, th, .quantity-label, span, p, div');
+                        var found2 = false;
+                        for (var k = 0; k < els.length; k++) {
+                            var el = els[k];
+                            if (el.getAttribute(DONE)) continue;
+                            if (el.children.length > 0) continue; // only leaf nodes
+                            if (isQuantityWord(el.textContent)) {
+                                el.textContent = newText;
+                                el.className = 'wc-quantity-text';
+                                el.setAttribute(DONE, '1');
+                                wrapper.setAttribute(DONE, '1');
+                                found2 = true;
+                                break;
+                            }
+                        }
+                        if (found2) continue;
+                    }
+
+                    // --- Strategy 5: nothing found — inject above the wrapper ---
                     var span = document.createElement('span');
                     span.className = 'wc-quantity-text';
-                    span.style.display = 'block';
-                    span.textContent = text;
-                    containers[i].insertBefore(span, containers[i].firstChild);
+                    span.textContent = newText;
+                    wrapper.parentNode.insertBefore(span, wrapper);
+                    wrapper.setAttribute(DONE, '1');
                 }
             }
 
-            // Run once on load.
+            // Run on DOM ready.
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', inject);
+                document.addEventListener('DOMContentLoaded', apply);
             } else {
-                inject();
+                apply();
             }
 
-            // Re-run when variations or AJAX rebuild the quantity field.
-            var form = document.querySelector('form.cart');
-            if (form && typeof MutationObserver !== 'undefined') {
-                new MutationObserver(function() { inject(); }).observe(form, { childList: true, subtree: true });
+            // Re-run on AJAX / variation switches.
+            var obs = typeof MutationObserver !== 'undefined';
+            if (obs) {
+                var target = document.querySelector('form.cart')
+                          || document.querySelector('.product');
+                if (target) {
+                    new MutationObserver(function() { apply(); })
+                        .observe(target, { childList: true, subtree: true });
+                }
+            }
+
+            // Also re-run on WooCommerce variation events (jQuery-based).
+            if (typeof jQuery !== 'undefined') {
+                jQuery(document).on('show_variation reset_data', 'form.variations_form', function() {
+                    setTimeout(apply, 100);
+                });
             }
         })();
         </script>
