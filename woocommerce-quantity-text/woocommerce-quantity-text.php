@@ -352,7 +352,7 @@ class WC_Quantity_Text {
             clip-path: none !important;
             margin-bottom: 6px !important;
             font-weight: 600;
-            font-size: .95em;
+            font-size: 125%;
         }
         </style>
         <script>
