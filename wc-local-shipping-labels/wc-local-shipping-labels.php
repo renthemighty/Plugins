@@ -74,13 +74,6 @@ class WC_Local_Shipping_Labels {
                 'id'    => 'wc_lsl_settings',
             ],
             [
-                'title'   => __('Sender Name / Store Name', 'wc-local-shipping-labels'),
-                'id'      => 'wc_lsl_sender_name',
-                'type'    => 'text',
-                'default' => "Berry's Bear Bar's",
-                'desc'    => __('Business or store name to appear on the label.', 'wc-local-shipping-labels'),
-            ],
-            [
                 'title'   => __('Sender Phone', 'wc-local-shipping-labels'),
                 'id'      => 'wc_lsl_sender_phone',
                 'type'    => 'text',
@@ -265,7 +258,7 @@ class WC_Local_Shipping_Labels {
         $order_number = str_pad($order_id, 6, '0', STR_PAD_LEFT);
 
         // Sender info from settings
-        $sender_name    = get_option('wc_lsl_sender_name', "Berry's Bear Bar's");
+        $sender_name    = "Berry's Bear Bar's";
         $sender_phone   = get_option('wc_lsl_sender_phone', '');
         $sender_address = get_option('wc_lsl_sender_address', '');
         $sender_city    = get_option('wc_lsl_sender_city_line', '');
