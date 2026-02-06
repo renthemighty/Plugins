@@ -265,7 +265,7 @@ class WC_Local_Shipping_Labels {
         $order_number = str_pad($order_id, 6, '0', STR_PAD_LEFT);
 
         // Sender info from settings
-        $sender_name    = get_option('wc_lsl_sender_name', get_bloginfo('name'));
+        $sender_name    = get_option('wc_lsl_sender_name', "Berry's Bear Bar's");
         $sender_phone   = get_option('wc_lsl_sender_phone', '');
         $sender_address = get_option('wc_lsl_sender_address', '');
         $sender_city    = get_option('wc_lsl_sender_city_line', '');
