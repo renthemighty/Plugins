@@ -77,7 +77,7 @@ class WC_Local_Shipping_Labels {
                 'title'   => __('Sender Name / Store Name', 'wc-local-shipping-labels'),
                 'id'      => 'wc_lsl_sender_name',
                 'type'    => 'text',
-                'default' => get_bloginfo('name'),
+                'default' => "Berry's Bear Bar's",
                 'desc'    => __('Business or store name to appear on the label.', 'wc-local-shipping-labels'),
             ],
             [
