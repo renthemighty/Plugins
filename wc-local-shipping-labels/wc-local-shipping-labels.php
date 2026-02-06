@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Local Shipping Labels
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Generates local shipping labels for WooCommerce orders with barcode, tracking number, and printable label format.
- * Version: 1.0.0
+ * Version: 1.0.3
  * Author: Megatron
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -22,7 +22,7 @@ class WC_Local_Shipping_Labels {
 
     private static $instance = null;
 
-    const VERSION = '1.0.0';
+    const VERSION = '1.0.3';
 
     public static function instance() {
         if (null === self::$instance) {
