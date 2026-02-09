@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+		Share Extension Info.plist for Kira.
+
+		NOTE: This plist must belong to a Share Extension target in Xcode.
+		You must manually create the target (File > New > Target > Share Extension)
+		and configure it to use this Info.plist. The target's bundle display name,
+		bundle identifier, and version should be set in the Xcode build settings,
+		not duplicated here.
+	-->
+
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.share-services</string>
+
+		<key>NSExtensionPrincipalClass</key>
+		<string>ShareViewController</string>
+
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<!--
+				Activation rule: only activate when the share sheet contains
+				one or more JPEG or PNG images. The predicate limits the
+				extension to image attachments to avoid appearing for
+				irrelevant content types.
+			-->
+			<key>NSExtensionActivationRule</key>
+			<dict>
+				<key>NSExtensionActivationSupportsImageWithMaxCount</key>
+				<integer>10</integer>
+			</dict>
+		</dict>
+	</dict>
+</dict>
+</plist>

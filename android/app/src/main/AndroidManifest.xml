@@ -1,0 +1,207 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    package="com.kira.app">
+
+    <!-- ============================================================ -->
+    <!-- Permissions                                                    -->
+    <!-- ============================================================ -->
+
+    <!-- Camera: sole ingestion method for receipts. No gallery access. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+
+    <!-- Internet: required for OAuth flows and cloud sync. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- Network state: to detect connectivity for sync scheduling. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+    <!-- Foreground service: for background sync operations. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- Wake lock: required by WorkManager for reliable background tasks. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <!-- Receive boot completed: reschedule sync after device reboot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!-- POST_NOTIFICATIONS: for sync progress and completion (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Biometric: for app lock feature. -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
+    <!-- ============================================================ -->
+    <!-- Application                                                   -->
+    <!-- ============================================================ -->
+
+    <application
+        android:label="Kira"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:usesCleartextTraffic="false"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:supportsRtl="true"
+        android:theme="@style/LaunchTheme"
+        android:localeConfig="@xml/locales_config"
+        tools:targetApi="34">
+
+        <!-- ======================================================== -->
+        <!-- Main Activity                                             -->
+        <!-- ======================================================== -->
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+
+            <!-- Main launcher intent -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <!-- OAuth redirect URI handler (custom scheme) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="com.kira.app" />
+            </intent-filter>
+
+            <!-- Universal link / App Link handler for OAuth redirects -->
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="https"
+                    android:host="auth.kira.example.com"
+                    android:pathPrefix="/callback" />
+            </intent-filter>
+
+            <!-- MSAL redirect for Microsoft/OneDrive OAuth -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="msauth"
+                    android:host="com.kira.app" />
+            </intent-filter>
+
+            <!-- ================================================== -->
+            <!-- Share target: receive single image from other apps  -->
+            <!-- ================================================== -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/jpeg" />
+                <data android:mimeType="image/png" />
+            </intent-filter>
+
+            <!-- ================================================== -->
+            <!-- Share target: receive multiple images from other    -->
+            <!-- apps (e.g. gallery multi-select share)              -->
+            <!-- ================================================== -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/jpeg" />
+                <data android:mimeType="image/png" />
+            </intent-filter>
+        </activity>
+
+        <!-- ======================================================== -->
+        <!-- MSAL Authentication Activity (Microsoft / OneDrive)       -->
+        <!-- ======================================================== -->
+
+        <activity
+            android:name="com.microsoft.identity.client.BrowserTabActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="msauth"
+                    android:host="com.kira.app"
+                    android:path="/callback" />
+            </intent-filter>
+        </activity>
+
+        <!-- ======================================================== -->
+        <!-- WorkManager: Background Sync Initialization               -->
+        <!-- ======================================================== -->
+
+        <!-- Disable default WorkManager initializer; Kira uses custom init -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.work.WorkManagerInitializer"
+                android:value="androidx.startup"
+                tools:node="remove" />
+        </provider>
+
+        <!-- ======================================================== -->
+        <!-- Foreground Service: Background Sync                       -->
+        <!-- ======================================================== -->
+
+        <service
+            android:name=".services.SyncForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- ======================================================== -->
+        <!-- Boot Receiver: Reschedule sync after reboot               -->
+        <!-- ======================================================== -->
+
+        <receiver
+            android:name=".receivers.BootCompletedReceiver"
+            android:exported="true"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- ======================================================== -->
+        <!-- Metadata                                                  -->
+        <!-- ======================================================== -->
+
+        <!-- Flutter embedding metadata -->
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+
+    </application>
+
+    <!-- ============================================================ -->
+    <!-- Queries: declare packages the app interacts with              -->
+    <!-- Required for Android 11+ (package visibility)                 -->
+    <!-- ============================================================ -->
+
+    <queries>
+        <!-- Browsers for OAuth flows -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+
+</manifest>
