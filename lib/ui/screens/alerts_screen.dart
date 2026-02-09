@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
 
-import '../../core/models/integrity_alert.dart';
+import '../../core/integrity/integrity_auditor.dart';
 import '../theme/kira_icons.dart';
 import '../theme/kira_theme.dart';
 
@@ -20,6 +20,10 @@ class AlertsScreen extends StatefulWidget {
 class _AlertsScreenState extends State<AlertsScreen> {
   List<IntegrityAlert> _alerts = [];
   bool _loading = true;
+
+  // Track locally dismissed/quarantined alert IDs.
+  final Set<int> _dismissedIds = {};
+  final Set<int> _quarantinedIds = {};
 
   @override
   void initState() {
@@ -37,8 +41,19 @@ class _AlertsScreenState extends State<AlertsScreen> {
     });
   }
 
-  List<IntegrityAlert> get _activeAlerts =>
-      _alerts.where((a) => !a.dismissed && !a.quarantined).toList();
+  List<IntegrityAlert> get _activeAlerts => _alerts
+      .where((a) =>
+          !a.resolved &&
+          !_dismissedIds.contains(a.id) &&
+          !_quarantinedIds.contains(a.id))
+      .toList();
+
+  IntegrityAlertType? _parseAlertType(String alertType) {
+    for (final t in IntegrityAlertType.values) {
+      if (t.name == alertType) return t;
+    }
+    return null;
+  }
 
   IconData _alertTypeIcon(IntegrityAlertType type) {
     switch (type) {
@@ -108,25 +123,21 @@ class _AlertsScreenState extends State<AlertsScreen> {
       ),
     );
 
-    if (confirmed == true) {
+    if (confirmed == true && alert.id != null) {
       setState(() {
-        final idx = _alerts.indexOf(alert);
-        if (idx >= 0) {
-          _alerts[idx] = alert.copyWith(quarantined: true);
-        }
+        _quarantinedIds.add(alert.id!);
       });
-      // TODO: Persist quarantine via DAO and move file.
+      // TODO: Persist quarantine via IntegrityAuditor.quarantineFile.
     }
   }
 
   void _dismissAlert(IntegrityAlert alert) {
-    setState(() {
-      final idx = _alerts.indexOf(alert);
-      if (idx >= 0) {
-        _alerts[idx] = alert.copyWith(dismissed: true);
-      }
-    });
-    // TODO: Persist dismissal.
+    if (alert.id != null) {
+      setState(() {
+        _dismissedIds.add(alert.id!);
+      });
+      // TODO: Persist dismissal via IntegrityAuditor.dismissAlert.
+    }
   }
 
   @override
@@ -248,8 +259,11 @@ class _AlertsScreenState extends State<AlertsScreen> {
     ColorScheme colors,
     TextTheme text,
   ) {
-    final typeColor = _alertTypeColor(alert.type);
-    final typeIcon = _alertTypeIcon(alert.type);
+    final alertType = _parseAlertType(alert.alertType);
+    final typeColor =
+        alertType != null ? _alertTypeColor(alertType) : KiraColors.mediumGrey;
+    final typeIcon =
+        alertType != null ? _alertTypeIcon(alertType) : KiraIcons.warning;
 
     return Card(
       margin: const EdgeInsets.symmetric(
@@ -268,7 +282,9 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 const SizedBox(width: KiraDimens.spacingSm),
                 Expanded(
                   child: Text(
-                    _alertTypeLabel(l10n, alert.type),
+                    alertType != null
+                        ? _alertTypeLabel(l10n, alertType)
+                        : alert.alertType,
                     style: text.titleSmall?.copyWith(color: typeColor),
                   ),
                 ),
@@ -291,7 +307,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 const SizedBox(width: KiraDimens.spacingXs),
                 Expanded(
                   child: Text(
-                    alert.path,
+                    alert.filePath ?? '',
                     style: text.bodySmall?.copyWith(
                       fontFamily: 'monospace',
                     ),
@@ -311,7 +327,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
                 borderRadius: BorderRadius.circular(KiraDimens.radiusSm),
               ),
               child: Text(
-                alert.recommendedAction,
+                alert.recommendedAction ?? '',
                 style: text.bodySmall?.copyWith(
                   fontStyle: FontStyle.italic,
                 ),

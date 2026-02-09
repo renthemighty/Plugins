@@ -229,7 +229,9 @@ class KiraApp extends StatelessWidget {
       ],
       supportedLocales: const [
         Locale('en'),
+        Locale('fr'),
         Locale('fr', 'CA'),
+        Locale('es'),
         Locale('es', 'US'),
       ],
 

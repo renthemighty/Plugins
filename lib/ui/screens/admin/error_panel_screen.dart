@@ -4,7 +4,8 @@
 /// capabilities. All PII is redacted and no auth tokens are shown.
 ///
 /// Features:
-/// - Scrollable list of error records with timestamp, module, code, message.
+/// - Scrollable list of error records with timestamp, module, error code,
+///   and message.
 /// - Expandable detail view with stack trace, correlation IDs, OS/device info.
 /// - Filter by module, error code, and date range.
 /// - Export to JSON and CSV.
@@ -18,10 +19,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 import 'package:intl/intl.dart';
-import 'package:share_plus/share_plus.dart';
 
 import '../../../core/db/error_dao.dart';
-import '../../../core/models/error_record.dart';
 import '../../theme/kira_icons.dart';
 import '../../theme/kira_theme.dart';
 
@@ -37,6 +36,14 @@ class ErrorPanelScreen extends StatefulWidget {
 }
 
 class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
+  // Error records list with: timestamp, module, error code, message.
+  // Expandable detail: stack trace, correlation IDs, OS/device info.
+  // Filter by module, error code, date range.
+  // Export: JSON, CSV buttons.
+  // "Copy prompt" button that summarises top errors for dev tools.
+  // PII redacted, no tokens shown.
+  // All strings via localization.
+
   final ErrorDao _errorDao = ErrorDao();
 
   List<ErrorRecord> _allErrors = [];
@@ -44,15 +51,15 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
   bool _loading = true;
   String? _errorMessage;
 
-  // Filter state
+  // Filter state.
   String? _selectedModule;
   String? _selectedErrorCode;
   DateTimeRange? _dateRange;
 
-  // Expansion state
+  // Expansion state (tracked by error id).
   final Set<String> _expandedIds = {};
 
-  // Available filter options (populated from data)
+  // Available filter options (populated from loaded data).
   List<String> _availableModules = [];
   List<String> _availableErrorCodes = [];
 
@@ -77,8 +84,10 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
       final codes = <String>{};
       for (final error in errors) {
         modules.add(error.errorType);
-        // error_dao ErrorRecord uses errorType instead of module/errorCode.
-        // We parse the context field if available for more detail.
+        // Parse context field for error codes when available.
+        if (error.context != null && error.context!.isNotEmpty) {
+          codes.add(error.context!.split(':').first.trim());
+        }
       }
 
       setState(() {
@@ -110,7 +119,8 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     if (_selectedErrorCode != null && _selectedErrorCode!.isNotEmpty) {
       filtered = filtered
           .where((e) =>
-              e.context != null && e.context!.contains(_selectedErrorCode!))
+              e.context != null &&
+              e.context!.contains(_selectedErrorCode!))
           .toList();
     }
 
@@ -121,12 +131,27 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           .add(const Duration(days: 1))
           .toIso8601String();
       filtered = filtered
-          .where((e) => e.createdAt.compareTo(start) >= 0 &&
+          .where((e) =>
+              e.createdAt.compareTo(start) >= 0 &&
               e.createdAt.compareTo(end) < 0)
           .toList();
     }
 
     _filteredErrors = filtered;
+  }
+
+  bool get _hasActiveFilters =>
+      _selectedModule != null ||
+      _selectedErrorCode != null ||
+      _dateRange != null;
+
+  void _clearFilters() {
+    setState(() {
+      _selectedModule = null;
+      _selectedErrorCode = null;
+      _dateRange = null;
+      _applyFilters();
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -147,20 +172,22 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           onPressed: () => Navigator.of(context).pop(),
           tooltip: l10n.back,
         ),
-        title: Text(l10n.integrityAlerts), // "Error Reports"
+        title: Text(l10n.adminErrorPanel),
         actions: [
+          // Export menu: JSON, CSV, Copy prompt.
           PopupMenuButton<String>(
             icon: const Icon(KiraIcons.moreVert),
-            tooltip: l10n.settings,
+            tooltip: l10n.adminExportErrors,
             onSelected: _handleExportAction,
             itemBuilder: (context) => [
               PopupMenuItem(
                 value: 'json',
                 child: Row(
                   children: [
-                    const Icon(KiraIcons.exportIcon, size: KiraDimens.iconSm),
+                    const Icon(KiraIcons.exportIcon,
+                        size: KiraDimens.iconSm),
                     const SizedBox(width: KiraDimens.spacingSm),
-                    Text(l10n.reports), // "Export JSON"
+                    Text(l10n.exportCsv.replaceAll('CSV', 'JSON')),
                   ],
                 ),
               ),
@@ -170,7 +197,7 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
                   children: [
                     const Icon(KiraIcons.csv, size: KiraDimens.iconSm),
                     const SizedBox(width: KiraDimens.spacingSm),
-                    Text(l10n.reports), // "Export CSV"
+                    Text(l10n.exportCsv),
                   ],
                 ),
               ),
@@ -181,7 +208,7 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
                   children: [
                     const Icon(KiraIcons.copy, size: KiraDimens.iconSm),
                     const SizedBox(width: KiraDimens.spacingSm),
-                    Text(l10n.save), // "Copy Prompt"
+                    Text(l10n.adminExportErrors),
                   ],
                 ),
               ),
@@ -235,12 +262,12 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
         children: [
           Row(
             children: [
-              // Module filter
+              // Module filter dropdown.
               Expanded(
                 child: _buildFilterDropdown(
                   value: _selectedModule,
                   items: _availableModules,
-                  hint: l10n.category, // "Module"
+                  hint: l10n.category,
                   icon: KiraIcons.filter,
                   onChanged: (value) {
                     setState(() {
@@ -253,16 +280,36 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
                 ),
               ),
               const SizedBox(width: KiraDimens.spacingSm),
-
-              // Date range picker
+              // Error code filter dropdown.
+              if (_availableErrorCodes.isNotEmpty) ...[
+                Expanded(
+                  child: _buildFilterDropdown(
+                    value: _selectedErrorCode,
+                    items: _availableErrorCodes,
+                    hint: l10n.error,
+                    icon: KiraIcons.error,
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedErrorCode = value;
+                        _applyFilters();
+                      });
+                    },
+                    colors: colors,
+                    text: text,
+                  ),
+                ),
+                const SizedBox(width: KiraDimens.spacingSm),
+              ],
+              // Date range picker.
               OutlinedButton.icon(
                 onPressed: () => _selectDateRange(l10n),
-                icon: const Icon(KiraIcons.dateRange, size: KiraDimens.iconSm),
+                icon: const Icon(KiraIcons.dateRange,
+                    size: KiraDimens.iconSm),
                 label: Text(
                   _dateRange != null
                       ? '${DateFormat('MM/dd').format(_dateRange!.start)} - '
-                        '${DateFormat('MM/dd').format(_dateRange!.end)}'
-                      : l10n.reports, // "Date Range"
+                          '${DateFormat('MM/dd').format(_dateRange!.end)}'
+                      : l10n.receiptDate,
                   style: text.bodySmall,
                 ),
               ),
@@ -274,12 +321,13 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
               children: [
                 Text(
                   '${_filteredErrors.length} / ${_allErrors.length}',
-                  style: text.bodySmall?.copyWith(color: colors.outline),
+                  style:
+                      text.bodySmall?.copyWith(color: colors.outline),
                 ),
                 const Spacer(),
                 TextButton(
                   onPressed: _clearFilters,
-                  child: Text(l10n.cancel), // "Clear Filters"
+                  child: Text(l10n.cancel),
                 ),
               ],
             ),
@@ -287,20 +335,6 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
         ],
       ),
     );
-  }
-
-  bool get _hasActiveFilters =>
-      _selectedModule != null ||
-      _selectedErrorCode != null ||
-      _dateRange != null;
-
-  void _clearFilters() {
-    setState(() {
-      _selectedModule = null;
-      _selectedErrorCode = null;
-      _dateRange = null;
-      _applyFilters();
-    });
   }
 
   Widget _buildFilterDropdown({
@@ -313,7 +347,8 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     required TextTheme text,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: KiraDimens.spacingSm),
+      padding:
+          const EdgeInsets.symmetric(horizontal: KiraDimens.spacingSm),
       decoration: BoxDecoration(
         border: Border.all(color: colors.outlineVariant),
         borderRadius: BorderRadius.circular(KiraDimens.radiusSm),
@@ -324,7 +359,8 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           hint: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icon, size: KiraDimens.iconSm, color: colors.outline),
+              Icon(icon,
+                  size: KiraDimens.iconSm, color: colors.outline),
               const SizedBox(width: KiraDimens.spacingXs),
               Text(hint, style: text.bodySmall),
             ],
@@ -378,12 +414,15 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     TextTheme text,
   ) {
     return ListView.builder(
-      padding: const EdgeInsets.symmetric(vertical: KiraDimens.spacingSm),
+      padding:
+          const EdgeInsets.symmetric(vertical: KiraDimens.spacingSm),
       itemCount: _filteredErrors.length,
       itemBuilder: (context, index) {
         final error = _filteredErrors[index];
-        final isExpanded = _expandedIds.contains(error.id.toString());
-        return _buildErrorCard(error, isExpanded, l10n, colors, text);
+        final errorId = error.id.toString();
+        final isExpanded = _expandedIds.contains(errorId);
+        return _buildErrorCard(
+            error, isExpanded, l10n, colors, text);
       },
     );
   }
@@ -418,11 +457,11 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header row: timestamp + module + error code
+              // Header: timestamp + module badge + error code badge.
               _buildErrorHeader(error, colors, text),
               const SizedBox(height: KiraDimens.spacingSm),
 
-              // Message (always visible, redacted)
+              // Message (always visible, PII-redacted).
               Text(
                 _redactValue(error.message),
                 style: text.bodyMedium,
@@ -430,18 +469,20 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
                 overflow: isExpanded ? null : TextOverflow.ellipsis,
               ),
 
-              // Expanded detail section
+              // Expanded detail section.
               if (isExpanded) ...[
                 const Divider(height: KiraDimens.spacingXl),
                 _buildExpandedDetail(error, l10n, colors, text),
               ],
 
-              // Expand/collapse indicator
+              // Expand/collapse chevron.
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   Icon(
-                    isExpanded ? KiraIcons.expandLess : KiraIcons.expandMore,
+                    isExpanded
+                        ? KiraIcons.expandLess
+                        : KiraIcons.expandMore,
                     size: KiraDimens.iconSm,
                     color: colors.outline,
                   ),
@@ -463,7 +504,7 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
 
     return Row(
       children: [
-        // Severity indicator
+        // Severity colour indicator.
         Container(
           width: 4,
           height: 32,
@@ -473,12 +514,11 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           ),
         ),
         const SizedBox(width: KiraDimens.spacingSm),
-
-        // Timestamp
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Timestamp.
               Text(
                 _formatTimestamp(error.createdAt),
                 style: text.bodySmall?.copyWith(
@@ -489,14 +529,11 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
               const SizedBox(height: KiraDimens.spacingXxs),
               Row(
                 children: [
-                  _buildBadge(
-                    error.errorType,
-                    severityColor,
-                    text,
-                  ),
+                  // Module badge.
+                  _badge(error.errorType, severityColor, text),
                   if (error.resolved) ...[
                     const SizedBox(width: KiraDimens.spacingXs),
-                    _buildBadge(
+                    _badge(
                       'resolved',
                       KiraColors.syncedGreen,
                       text,
@@ -511,6 +548,10 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     );
   }
 
+  // -------------------------------------------------------------------------
+  // Expanded detail: stack trace, correlation IDs, OS/device info
+  // -------------------------------------------------------------------------
+
   Widget _buildExpandedDetail(
     ErrorRecord error,
     AppLocalizations l10n,
@@ -520,16 +561,18 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // Stack trace (PII redacted)
-        if (error.stackTrace != null && error.stackTrace!.isNotEmpty) ...[
-          Text(l10n.integrityAlerts, style: text.titleSmall), // "Stack Trace"
+        // Stack trace (PII-redacted).
+        if (error.stackTrace != null &&
+            error.stackTrace!.isNotEmpty) ...[
+          Text(l10n.error, style: text.titleSmall),
           const SizedBox(height: KiraDimens.spacingXs),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(KiraDimens.spacingSm),
             decoration: BoxDecoration(
               color: colors.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(KiraDimens.radiusSm),
+              borderRadius:
+                  BorderRadius.circular(KiraDimens.radiusSm),
             ),
             child: SelectableText(
               _redactStackTrace(error.stackTrace!),
@@ -543,12 +586,12 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           const SizedBox(height: KiraDimens.spacingMd),
         ],
 
-        // Device / OS info
+        // Device / OS info.
         if (error.deviceId != null || error.appVersion != null) ...[
-          Text(l10n.settingsAbout, style: text.titleSmall), // "Device Info"
+          Text(l10n.settingsAbout, style: text.titleSmall),
           const SizedBox(height: KiraDimens.spacingXs),
           if (error.appVersion != null)
-            _buildInfoRow(
+            _infoRow(
               l10n.settingsAbout,
               error.appVersion!,
               KiraIcons.about,
@@ -556,7 +599,7 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
               text,
             ),
           if (error.deviceId != null)
-            _buildInfoRow(
+            _infoRow(
               l10n.settings,
               _redactValue(error.deviceId!),
               KiraIcons.person,
@@ -566,67 +609,26 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           const SizedBox(height: KiraDimens.spacingMd),
         ],
 
-        // Context / correlation IDs
+        // Context / correlation IDs.
         if (error.context != null && error.context!.isNotEmpty) ...[
-          Text(l10n.reports, style: text.titleSmall), // "Context"
+          Text(l10n.receiptDetail, style: text.titleSmall),
           const SizedBox(height: KiraDimens.spacingXs),
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(KiraDimens.spacingSm),
             decoration: BoxDecoration(
               color: colors.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(KiraDimens.radiusSm),
+              borderRadius:
+                  BorderRadius.circular(KiraDimens.radiusSm),
             ),
             child: Text(
               _redactValue(error.context!),
-              style: text.bodySmall?.copyWith(fontFamily: 'monospace'),
+              style:
+                  text.bodySmall?.copyWith(fontFamily: 'monospace'),
             ),
           ),
         ],
       ],
-    );
-  }
-
-  Widget _buildInfoRow(
-    String label,
-    String value,
-    IconData icon,
-    ColorScheme colors,
-    TextTheme text,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: KiraDimens.spacingXs),
-      child: Row(
-        children: [
-          Icon(icon, size: KiraDimens.iconSm, color: colors.outline),
-          const SizedBox(width: KiraDimens.spacingXs),
-          Text('$label: ', style: text.bodySmall),
-          Expanded(
-            child: Text(
-              value,
-              style: text.bodySmall?.copyWith(fontFamily: 'monospace'),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildBadge(String label, Color color, TextTheme text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(
-        horizontal: KiraDimens.spacingSm,
-        vertical: KiraDimens.spacingXxs,
-      ),
-      decoration: BoxDecoration(
-        color: color.withAlpha(25),
-        borderRadius: BorderRadius.circular(KiraDimens.radiusFull),
-      ),
-      child: Text(
-        label,
-        style: text.labelSmall?.copyWith(color: color),
-      ),
     );
   }
 
@@ -651,9 +653,10 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
           const SizedBox(height: KiraDimens.spacingLg),
           Text(
             _hasActiveFilters
-                ? l10n.cancel // "No matching errors"
-                : l10n.integrityAlerts, // "No errors recorded"
-            style: text.titleMedium?.copyWith(color: KiraColors.syncedGreen),
+                ? l10n.noReceipts
+                : l10n.integrityNoAlerts,
+            style: text.titleMedium
+                ?.copyWith(color: KiraColors.syncedGreen),
           ),
         ],
       ),
@@ -671,7 +674,8 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(KiraIcons.error, size: KiraDimens.iconXl, color: colors.error),
+            Icon(KiraIcons.error,
+                size: KiraDimens.iconXl, color: colors.error),
             const SizedBox(height: KiraDimens.spacingLg),
             Text(
               _errorMessage ?? '',
@@ -681,11 +685,61 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
             const SizedBox(height: KiraDimens.spacingXl),
             ElevatedButton.icon(
               onPressed: _loadErrors,
-              icon: const Icon(KiraIcons.refresh, size: KiraDimens.iconSm),
+              icon: const Icon(KiraIcons.refresh,
+                  size: KiraDimens.iconSm),
               label: Text(l10n.syncNow),
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  // -------------------------------------------------------------------------
+  // Shared widgets
+  // -------------------------------------------------------------------------
+
+  Widget _badge(String label, Color color, TextTheme text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: KiraDimens.spacingSm,
+        vertical: KiraDimens.spacingXxs,
+      ),
+      decoration: BoxDecoration(
+        color: color.withAlpha(25),
+        borderRadius: BorderRadius.circular(KiraDimens.radiusFull),
+      ),
+      child: Text(
+        label,
+        style: text.labelSmall?.copyWith(color: color),
+      ),
+    );
+  }
+
+  Widget _infoRow(
+    String label,
+    String value,
+    IconData icon,
+    ColorScheme colors,
+    TextTheme text,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: KiraDimens.spacingXs),
+      child: Row(
+        children: [
+          Icon(icon,
+              size: KiraDimens.iconSm, color: colors.outline),
+          const SizedBox(width: KiraDimens.spacingXs),
+          Text('$label: ', style: text.bodySmall),
+          Expanded(
+            child: Text(
+              value,
+              style: text.bodySmall
+                  ?.copyWith(fontFamily: 'monospace'),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -698,39 +752,41 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     switch (action) {
       case 'json':
         _exportJson();
-        break;
       case 'csv':
         _exportCsv();
-        break;
       case 'copy_prompt':
         _copyPrompt();
-        break;
     }
   }
 
+  /// Exports filtered errors as a JSON array to the clipboard.
   void _exportJson() {
-    final records = _filteredErrors.map((e) => _sanitizeForExport(e)).toList();
-    final json = const JsonEncoder.withIndent('  ').convert(records);
+    final records =
+        _filteredErrors.map(_sanitizeForExport).toList();
+    final json =
+        const JsonEncoder.withIndent('  ').convert(records);
 
     Clipboard.setData(ClipboardData(text: json));
 
     if (mounted) {
       final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.save)), // "JSON copied to clipboard"
+        SnackBar(content: Text(l10n.success)),
       );
     }
   }
 
+  /// Exports filtered errors as CSV to the clipboard.
   void _exportCsv() {
     final buffer = StringBuffer();
 
-    // CSV header
+    // CSV header.
     buffer.writeln('id,timestamp,error_type,message,resolved');
 
-    // CSV rows
+    // CSV rows (PII-redacted).
     for (final error in _filteredErrors) {
-      final msg = _redactValue(error.message).replaceAll('"', '""');
+      final msg =
+          _redactValue(error.message).replaceAll('"', '""');
       buffer.writeln(
         '${error.id},'
         '${error.createdAt},'
@@ -745,59 +801,62 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     if (mounted) {
       final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.save)), // "CSV copied to clipboard"
+        SnackBar(content: Text(l10n.success)),
       );
     }
   }
 
-  /// Generates a developer-friendly summary of the top errors with repro
-  /// context, suitable for pasting into a bug report or AI prompt.
+  /// Generates a developer-friendly summary of top errors suitable for
+  /// pasting into a bug report or AI-assisted debugging prompt.
   void _copyPrompt() {
     final buffer = StringBuffer();
     buffer.writeln('=== Kira Error Summary ===');
-    buffer.writeln('Generated: ${DateTime.now().toUtc().toIso8601String()}');
+    buffer.writeln(
+        'Generated: ${DateTime.now().toUtc().toIso8601String()}');
     buffer.writeln('Total errors: ${_filteredErrors.length}');
     buffer.writeln();
 
     // Group by error type and count.
-    final groupedByType = <String, List<ErrorRecord>>{};
+    final grouped = <String, List<ErrorRecord>>{};
     for (final error in _filteredErrors) {
-      groupedByType.putIfAbsent(error.errorType, () => []).add(error);
+      grouped.putIfAbsent(error.errorType, () => []).add(error);
     }
 
     // Sort by frequency descending.
-    final sortedTypes = groupedByType.entries.toList()
+    final sortedTypes = grouped.entries.toList()
       ..sort((a, b) => b.value.length.compareTo(a.value.length));
 
-    // Top 5 error types.
-    final topTypes = sortedTypes.take(5);
-    for (final entry in topTypes) {
-      buffer.writeln('--- ${entry.key} (${entry.value.length} occurrences) ---');
+    // Summarise top 5 error types.
+    for (final entry in sortedTypes.take(5)) {
+      buffer.writeln(
+          '--- ${entry.key} (${entry.value.length} occurrences) ---');
 
-      // Show the most recent error of this type.
       final latest = entry.value.first;
       buffer.writeln('Latest: ${latest.createdAt}');
       buffer.writeln('Message: ${_redactValue(latest.message)}');
 
-      if (latest.stackTrace != null && latest.stackTrace!.isNotEmpty) {
-        // Show first 5 lines of stack trace.
-        final lines = _redactStackTrace(latest.stackTrace!).split('\n');
+      if (latest.stackTrace != null &&
+          latest.stackTrace!.isNotEmpty) {
+        final lines =
+            _redactStackTrace(latest.stackTrace!).split('\n');
         final preview = lines.take(5).join('\n');
         buffer.writeln('Stack (top 5 frames):');
         buffer.writeln(preview);
       }
 
       if (latest.context != null && latest.context!.isNotEmpty) {
-        buffer.writeln('Context: ${_redactValue(latest.context!)}');
+        buffer.writeln(
+            'Context: ${_redactValue(latest.context!)}');
       }
 
       buffer.writeln();
-
-      // Suggested repro steps.
       buffer.writeln('Repro steps:');
-      buffer.writeln('1. Trigger the ${entry.key} module operation');
-      buffer.writeln('2. Observe error: ${_redactValue(latest.message)}');
-      buffer.writeln('3. Check logs around ${latest.createdAt}');
+      buffer.writeln(
+          '1. Trigger the ${entry.key} module operation');
+      buffer.writeln(
+          '2. Observe error: ${_redactValue(latest.message)}');
+      buffer.writeln(
+          '3. Check logs around ${latest.createdAt}');
       buffer.writeln();
     }
 
@@ -806,35 +865,38 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     if (mounted) {
       final l10n = AppLocalizations.of(context);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.save)), // "Prompt copied"
+        SnackBar(content: Text(l10n.success)),
       );
     }
   }
 
   // -------------------------------------------------------------------------
-  // PII redaction
+  // PII redaction -- no tokens, emails, or home paths shown
   // -------------------------------------------------------------------------
 
   /// Redacts potentially sensitive values from display strings.
   ///
   /// Patterns redacted:
-  /// - Bearer/OAuth tokens (replaced with `[TOKEN_REDACTED]`)
-  /// - Email addresses (replaced with `[EMAIL_REDACTED]`)
-  /// - File paths containing user directories (home directory stripped)
+  /// - Bearer/OAuth tokens
+  /// - Email addresses
+  /// - File paths containing user directories
   /// - UUIDs in device IDs (partially masked)
   static String _redactValue(String value) {
     var redacted = value;
 
     // Redact Bearer tokens.
     redacted = redacted.replaceAll(
-      RegExp(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*', caseSensitive: false),
+      RegExp(r'Bearer\s+[A-Za-z0-9\-._~+/]+=*',
+          caseSensitive: false),
       'Bearer [TOKEN_REDACTED]',
     );
 
-    // Redact OAuth-style tokens (long alphanumeric strings > 20 chars).
+    // Redact OAuth-style tokens (long alphanumeric strings).
     redacted = redacted.replaceAll(
-      RegExp(r'(?:token|key|secret|password|credential)["\s:=]+[A-Za-z0-9\-._~+/]{20,}',
-          caseSensitive: false),
+      RegExp(
+        r'(?:token|key|secret|password|credential)["\s:=]+[A-Za-z0-9\-._~+/]{20,}',
+        caseSensitive: false,
+      ),
       '[CREDENTIAL_REDACTED]',
     );
 
@@ -847,12 +909,11 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     return redacted;
   }
 
-  /// Redacts stack traces to remove potential PII from file paths and
-  /// user-specific directory structures.
+  /// Redacts stack traces to remove PII from file paths.
   static String _redactStackTrace(String stackTrace) {
     var redacted = stackTrace;
 
-    // Redact home directory paths.
+    // Redact home directory paths on macOS, Linux, and Windows.
     redacted = redacted.replaceAll(
       RegExp(r'/Users/[^/\s]+', caseSensitive: false),
       '/Users/[REDACTED]',
@@ -869,7 +930,7 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
     return _redactValue(redacted);
   }
 
-  /// Sanitises an error record for export, stripping all PII-sensitive fields.
+  /// Sanitises an error record for export, stripping PII-sensitive fields.
   Map<String, dynamic> _sanitizeForExport(ErrorRecord error) {
     return {
       'id': error.id,
@@ -893,15 +954,15 @@ class _ErrorPanelScreenState extends State<ErrorPanelScreen> {
 
   Color _getSeverityColor(String errorType) {
     switch (errorType) {
-      case 'upload':
-      case 'sync':
-      case 'network':
+      case ErrorType.upload:
+      case ErrorType.sync:
+      case ErrorType.network:
         return KiraColors.failedRed;
-      case 'integrity':
-      case 'database':
+      case ErrorType.integrity:
+      case ErrorType.database:
         return KiraColors.pendingAmber;
-      case 'camera':
-      case 'auth':
+      case ErrorType.camera:
+      case ErrorType.auth:
         return KiraColors.infoBlue;
       default:
         return KiraColors.mediumGrey;

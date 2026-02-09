@@ -13,7 +13,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -85,42 +84,26 @@ class GoogleDriveProvider implements StorageProvider {
   // ---------------------------------------------------------------------------
 
   @override
-  Future<void> uploadFile(String localPath, String remotePath) async {
-    final file = File(localPath);
-    if (!(await file.exists())) {
-      throw StorageException('Local file does not exist: $localPath');
-    }
-
-    final parentPath = _parentOf(remotePath);
-    final fileName = _nameOf(remotePath);
-    final parentId = await _ensureFolderChain(parentPath);
+  Future<void> uploadFile(String remotePath, String filename, List<int> data) async {
+    final parentId = await _ensureFolderChain(remotePath);
 
     // Check for existing file to overwrite.
-    final existingId = await _findFileId(fileName, parentId);
-
-    final bytes = await file.readAsBytes();
+    final existingId = await _findFileId(filename, parentId);
 
     if (existingId != null) {
-      await _updateFileContent(existingId, bytes);
+      await _updateFileContent(existingId, data);
     } else {
-      await _createFileWithContent(fileName, parentId, bytes);
+      await _createFileWithContent(filename, parentId, data);
     }
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
-    final parentPath = _parentOf(remotePath);
-    final fileName = _nameOf(remotePath);
-    final parentId = await _resolveFolderId(parentPath);
+  Future<List<int>?> downloadFile(String remotePath, String filename) async {
+    final parentId = await _resolveFolderId(remotePath);
+    if (parentId == null) return null;
 
-    if (parentId == null) {
-      throw StorageNotFoundException('Folder not found: $parentPath');
-    }
-
-    final fileId = await _findFileId(fileName, parentId);
-    if (fileId == null) {
-      throw StorageNotFoundException('File not found: $remotePath');
-    }
+    final fileId = await _findFileId(filename, parentId);
+    if (fileId == null) return null;
 
     final token = await _accessToken();
     final response = await retryWithBackoff(() async {
@@ -132,7 +115,7 @@ class GoogleDriveProvider implements StorageProvider {
       return resp;
     });
 
-    await File(localPath).writeAsBytes(response.bodyBytes, flush: true);
+    return response.bodyBytes;
   }
 
   @override

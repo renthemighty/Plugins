@@ -99,6 +99,27 @@
                     android:scheme="msauth"
                     android:host="com.kira.app" />
             </intent-filter>
+
+            <!-- ================================================== -->
+            <!-- Share target: receive single image from other apps  -->
+            <!-- ================================================== -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/jpeg" />
+                <data android:mimeType="image/png" />
+            </intent-filter>
+
+            <!-- ================================================== -->
+            <!-- Share target: receive multiple images from other    -->
+            <!-- apps (e.g. gallery multi-select share)              -->
+            <!-- ================================================== -->
+            <intent-filter>
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="image/jpeg" />
+                <data android:mimeType="image/png" />
+            </intent-filter>
         </activity>
 
         <!-- ======================================================== -->

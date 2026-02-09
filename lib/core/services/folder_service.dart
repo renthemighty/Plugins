@@ -200,10 +200,10 @@ class FolderService {
 // StorageProvider interface
 // ---------------------------------------------------------------------------
 
-/// Minimal interface that [FolderService] requires from the cloud storage
-/// layer.
+/// Unified interface for all Kira storage backends (Google Drive, Dropbox,
+/// OneDrive, Box, Kira Cloud, local-encrypted).
 ///
-/// The concrete implementation lives in the `storage` package and is injected
+/// Concrete implementations live in the `storage` package and are injected
 /// at app startup.
 abstract class StorageProvider {
   /// Creates the folder (and any missing ancestors) at [remotePath] on the
@@ -222,4 +222,31 @@ abstract class StorageProvider {
   ///
   /// Returns `null` if the file does not exist.
   Future<List<int>?> downloadFile(String remotePath, String filename);
+
+  /// Returns `true` when a file (not folder) exists at [remotePath].
+  Future<bool> fileExists(String remotePath);
+
+  /// Reads the UTF-8 text content of the file at [remotePath].
+  ///
+  /// Returns `null` if the file does not exist.
+  Future<String?> readTextFile(String remotePath);
+
+  /// Writes [content] as a UTF-8 text file at [remotePath], creating or
+  /// overwriting as needed.
+  Future<void> writeTextFile(String remotePath, String content);
+
+  /// Initiates the authentication flow (OAuth, passkey, etc.).
+  Future<void> authenticate();
+
+  /// Returns `true` when the provider has valid credentials.
+  Future<bool> isAuthenticated();
+
+  /// Signs out of the provider, revoking tokens where possible.
+  Future<void> logout();
+
+  /// Atomically moves (renames) a file from [fromPath] to [toPath].
+  Future<void> moveFile(String fromPath, String toPath);
+
+  /// A human-readable name for this provider (e.g. `"Google Drive"`).
+  String get providerName;
 }

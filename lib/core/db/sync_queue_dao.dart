@@ -10,6 +10,12 @@ import 'package:sqflite/sqflite.dart';
 
 import 'database_helper.dart';
 
+/// The type of sync operation.
+enum SyncAction { uploadImage, uploadIndex, download }
+
+/// The current status of a sync queue item.
+enum SyncStatus { pending, inProgress, failed, completed }
+
 /// Lightweight value object representing a single sync-queue row.
 class SyncQueueItem {
   final int? id;

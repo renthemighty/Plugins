@@ -24,7 +24,6 @@ import 'package:flutter/foundation.dart';
 import '../db/receipt_dao.dart';
 import '../db/settings_dao.dart';
 import '../db/sync_queue_dao.dart';
-import '../models/app_settings.dart';
 import '../models/receipt.dart';
 import '../models/day_index.dart';
 import '../services/checksum_service.dart';
@@ -150,8 +149,10 @@ class SyncEngine extends ChangeNotifier {
     // Check network policy
     if (_networkMonitor != null) {
       final settings = await _settingsDao.getAppSettings();
-      final policy = settings?.syncPolicy ?? SyncPolicy.wifiOnly;
-      final canSync = await _networkMonitor!.canSync(policy);
+      final canSync = await _networkMonitor!.canSync(
+        policy: settings.syncPolicy,
+        lowDataMode: settings.lowDataMode,
+      );
       if (!canSync) {
         _status = SyncEngineStatus.offline;
         notifyListeners();
@@ -351,8 +352,24 @@ class SyncEngine extends ChangeNotifier {
       }
     } catch (_) {}
 
-    // Merge indexes
-    final merged = _indexService!.mergeDayIndexes(localIndex, remoteIndex);
+    // Merge indexes (handle null cases)
+    DayIndex merged;
+    if (localIndex != null && remoteIndex != null) {
+      merged = _indexService!.mergeDayIndexes(localIndex, remoteIndex);
+    } else if (localIndex != null) {
+      merged = localIndex;
+    } else if (remoteIndex != null) {
+      merged = remoteIndex;
+    } else {
+      final date = DateTime.parse(receipt.capturedAt);
+      merged = DayIndex(
+        date: '${date.year.toString().padLeft(4, '0')}-'
+            '${date.month.toString().padLeft(2, '0')}-'
+            '${date.day.toString().padLeft(2, '0')}',
+        lastUpdated: DateTime.now().toUtc().toIso8601String(),
+        receipts: [],
+      );
+    }
 
     // Ensure receipt is in the merged index
     final updatedIndex = _indexService!.addReceiptToIndex(merged, receipt);

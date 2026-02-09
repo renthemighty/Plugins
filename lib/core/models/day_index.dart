@@ -36,7 +36,17 @@ class ReceiptIndexEntry {
   final bool conflict;
   final String? supersedesFilename;
 
-  const ReceiptIndexEntry({
+  // Extended fields for full Receipt reconstruction during sync.
+  final String timezone;
+  final String region;
+  final String? notes;
+  final bool? taxApplicable;
+  final String deviceId;
+  final String captureSessionId;
+  final String source;
+  final String createdAt;
+
+  ReceiptIndexEntry({
     required this.receiptId,
     required this.filename,
     required this.amountTracked,
@@ -47,7 +57,15 @@ class ReceiptIndexEntry {
     required this.updatedAt,
     this.conflict = false,
     this.supersedesFilename,
-  });
+    this.timezone = '',
+    this.region = '',
+    this.notes,
+    this.taxApplicable,
+    this.deviceId = '',
+    this.captureSessionId = '',
+    this.source = 'camera',
+    String? createdAt,
+  }) : createdAt = createdAt ?? capturedAt;
 
   factory ReceiptIndexEntry.fromJson(Map<String, dynamic> json) {
     return ReceiptIndexEntry(
@@ -61,6 +79,14 @@ class ReceiptIndexEntry {
       updatedAt: json['updated_at'] as String,
       conflict: json['conflict'] as bool? ?? false,
       supersedesFilename: json['supersedes_filename'] as String?,
+      timezone: json['timezone'] as String? ?? '',
+      region: json['region'] as String? ?? '',
+      notes: json['notes'] as String?,
+      taxApplicable: json['tax_applicable'] as bool?,
+      deviceId: json['device_id'] as String? ?? '',
+      captureSessionId: json['capture_session_id'] as String? ?? '',
+      source: json['source'] as String? ?? 'camera',
+      createdAt: json['created_at'] as String?,
     );
   }
 
@@ -76,6 +102,14 @@ class ReceiptIndexEntry {
       'updated_at': updatedAt,
       'conflict': conflict,
       'supersedes_filename': supersedesFilename,
+      'timezone': timezone,
+      'region': region,
+      'notes': notes,
+      'tax_applicable': taxApplicable,
+      'device_id': deviceId,
+      'capture_session_id': captureSessionId,
+      'source': source,
+      'created_at': createdAt,
     };
   }
 
@@ -90,6 +124,14 @@ class ReceiptIndexEntry {
     String? updatedAt,
     bool? conflict,
     String? Function()? supersedesFilename,
+    String? timezone,
+    String? region,
+    String? Function()? notes,
+    bool? Function()? taxApplicable,
+    String? deviceId,
+    String? captureSessionId,
+    String? source,
+    String? createdAt,
   }) {
     return ReceiptIndexEntry(
       receiptId: receiptId ?? this.receiptId,
@@ -104,6 +146,14 @@ class ReceiptIndexEntry {
       supersedesFilename: supersedesFilename != null
           ? supersedesFilename()
           : this.supersedesFilename,
+      timezone: timezone ?? this.timezone,
+      region: region ?? this.region,
+      notes: notes != null ? notes() : this.notes,
+      taxApplicable: taxApplicable != null ? taxApplicable() : this.taxApplicable,
+      deviceId: deviceId ?? this.deviceId,
+      captureSessionId: captureSessionId ?? this.captureSessionId,
+      source: source ?? this.source,
+      createdAt: createdAt ?? this.createdAt,
     );
   }
 
