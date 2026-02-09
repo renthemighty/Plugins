@@ -1,0 +1,78 @@
+name: kira
+description: "Kira - The Receipt Saver. Capture, stamp, organize, and sync receipt photos."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.2.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # Database
+  sqflite: ^2.3.0
+  path: ^1.8.3
+  path_provider: ^2.1.1
+
+  # Camera
+  camera: ^0.10.5+9
+  image: ^4.1.3
+
+  # State management
+  provider: ^6.1.1
+
+  # Security / Auth
+  flutter_secure_storage: ^9.0.0
+  flutter_appauth: ^6.0.3
+  local_auth: ^2.1.8
+  crypto: ^3.0.3
+  pointycastle: ^3.7.3
+
+  # Networking
+  http: ^1.1.2
+  connectivity_plus: ^5.0.2
+
+  # UI
+  intl: ^0.19.0
+  google_fonts: ^6.1.0
+  fl_chart: ^0.65.0
+  cupertino_icons: ^1.0.6
+
+  # Background tasks
+  workmanager: ^0.5.2
+
+  # In-app purchase
+  in_app_purchase: ^3.1.11
+
+  # Utils
+  uuid: ^4.2.1
+  collection: ^1.18.0
+  share_plus: ^7.2.1
+  archive: ^3.4.9
+
+  # OCR
+  google_mlkit_text_recognition: ^0.11.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.1
+  mockito: ^5.4.4
+  build_runner: ^2.4.7
+  sqflite_common_ffi: ^2.3.0+4
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+  assets:
+    - assets/images/
+    - assets/branding/
+
+  fonts:
+    - family: KiraIcons
+      fonts:
+        - asset: assets/fonts/KiraIcons.ttf
