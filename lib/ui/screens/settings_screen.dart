@@ -6,6 +6,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
 
+import '../navigation/app_router.dart';
 import '../theme/kira_icons.dart';
 import '../theme/kira_theme.dart';
 
@@ -249,6 +250,40 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ],
             ),
           ),
+          // ---------------------------------------------------------------
+          // Admin Panel
+          // ---------------------------------------------------------------
+          _buildSectionHeader(
+            l10n.adminPanel,
+            KiraIcons.admin,
+            text,
+          ),
+          ListTile(
+            leading: const Icon(KiraIcons.admin, size: KiraDimens.iconMd),
+            title: Text(l10n.adminPanel, style: text.bodyMedium),
+            subtitle: Text(l10n.adminMetrics, style: text.bodySmall),
+            trailing: const Icon(KiraIcons.chevronRight, size: KiraDimens.iconSm),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: KiraDimens.spacingLg,
+            ),
+            onTap: () {
+              Navigator.of(context).pushNamed(AppRoutes.adminPanel);
+            },
+          ),
+          ListTile(
+            leading: const Icon(KiraIcons.error, size: KiraDimens.iconMd),
+            title: Text(l10n.adminErrorPanel, style: text.bodyMedium),
+            subtitle: Text(l10n.adminExportErrors, style: text.bodySmall),
+            trailing: const Icon(KiraIcons.chevronRight, size: KiraDimens.iconSm),
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: KiraDimens.spacingLg,
+            ),
+            onTap: () {
+              Navigator.of(context).pushNamed(AppRoutes.adminErrors);
+            },
+          ),
+          const Divider(),
+
           const SizedBox(height: KiraDimens.spacingXxxl),
         ],
       ),

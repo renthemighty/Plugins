@@ -9,9 +9,15 @@ import 'package:provider/provider.dart';
 
 import '../../core/services/trial_service.dart';
 import '../../main.dart';
+import '../screens/admin/admin_panel_screen.dart';
+import '../screens/admin/error_panel_screen.dart';
+import '../screens/alerts_screen.dart';
 import '../screens/capture_screen.dart';
 import '../screens/home_screen.dart';
+import '../screens/integrations_screen.dart';
 import '../screens/onboarding/onboarding_flow.dart';
+import '../screens/reports_screen.dart';
+import '../screens/settings_screen.dart';
 import '../screens/trial_welcome_screen.dart';
 import '../screens/upgrade_wall_screen.dart';
 
@@ -100,6 +106,42 @@ class AppRouter {
         return _buildRoute(
           routeSettings,
           const OnboardingFlow(),
+        );
+
+      case AppRoutes.adminPanel:
+        return _buildRoute(
+          routeSettings,
+          const AdminPanelScreen(),
+        );
+
+      case AppRoutes.adminErrors:
+        return _buildRoute(
+          routeSettings,
+          const ErrorPanelScreen(),
+        );
+
+      case AppRoutes.settings:
+        return _buildRoute(
+          routeSettings,
+          const SettingsScreen(),
+        );
+
+      case AppRoutes.alerts:
+        return _buildRoute(
+          routeSettings,
+          const AlertsScreen(),
+        );
+
+      case AppRoutes.reports:
+        return _buildRoute(
+          routeSettings,
+          const ReportsScreen(),
+        );
+
+      case AppRoutes.integrations:
+        return _buildRoute(
+          routeSettings,
+          const IntegrationsScreen(),
         );
 
       default:
