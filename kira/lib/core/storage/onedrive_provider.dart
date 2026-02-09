@@ -14,7 +14,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -120,14 +119,8 @@ class OneDriveProvider implements StorageProvider {
   // ---------------------------------------------------------------------------
 
   @override
-  Future<void> uploadFile(String localPath, String remotePath) async {
-    final file = File(localPath);
-    if (!(await file.exists())) {
-      throw StorageException('Local file does not exist: $localPath');
-    }
-
-    final bytes = await file.readAsBytes();
-    final drivePath = _drivePath(remotePath);
+  Future<void> uploadFile(String remotePath, String filename, List<int> data) async {
+    final drivePath = _drivePath('$remotePath/$filename');
     final token = await _accessToken();
 
     // Simple upload for files <= 4 MB.  For larger files a resumable upload
@@ -139,27 +132,31 @@ class OneDriveProvider implements StorageProvider {
           ..._authHeaders(token),
           'Content-Type': 'application/octet-stream',
         },
-        body: bytes,
+        body: data,
       );
       _checkResponse(resp);
     });
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
-    final drivePath = _drivePath(remotePath);
+  Future<List<int>?> downloadFile(String remotePath, String filename) async {
+    final drivePath = _drivePath('$remotePath/$filename');
     final token = await _accessToken();
 
-    final response = await retryWithBackoff(() async {
-      final resp = await _http.get(
-        Uri.parse('$_appRoot:/$drivePath:/content'),
-        headers: _authHeaders(token),
-      );
-      _checkResponse(resp);
-      return resp;
-    });
+    try {
+      final response = await retryWithBackoff(() async {
+        final resp = await _http.get(
+          Uri.parse('$_appRoot:/$drivePath:/content'),
+          headers: _authHeaders(token),
+        );
+        _checkResponse(resp);
+        return resp;
+      });
 
-    await File(localPath).writeAsBytes(response.bodyBytes, flush: true);
+      return response.bodyBytes;
+    } on StorageNotFoundException {
+      return null;
+    }
   }
 
   @override

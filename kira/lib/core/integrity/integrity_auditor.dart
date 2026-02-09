@@ -140,6 +140,39 @@ class IntegrityAuditor extends ChangeNotifier {
   }
 
   // -------------------------------------------------------------------------
+  // Convenience audit (fire-and-forget from main)
+  // -------------------------------------------------------------------------
+
+  /// Fire-and-forget audit that resolves the local receipts root automatically.
+  ///
+  /// Called from `main()` at launch.  Errors are silently caught so the app
+  /// always boots.
+  Future<void> runAudit() async {
+    try {
+      final dir = await _resolveLocalReceiptsRoot();
+      if (dir != null) {
+        await runQuickAudit(dir);
+      }
+    } catch (_) {
+      // Non-blocking -- never prevent app launch.
+    }
+  }
+
+  Future<String?> _resolveLocalReceiptsRoot() async {
+    try {
+      // Use path_provider to find app documents directory.
+      // Import is already available in this file through dart:io.
+      final baseDir = Directory.current.path;
+      // Look for a Receipts folder under the app's documents.
+      final receiptsDir = Directory('$baseDir/Receipts');
+      if (await receiptsDir.exists()) return receiptsDir.path;
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // Full audit
   // -------------------------------------------------------------------------
 

@@ -5,12 +5,14 @@
 /// [AppLocalizations] for full l10n support.
 ///
 /// Sections:
-/// 1. **Overview metrics** -- total users, DAU/MAU, subscription distribution.
-/// 2. **Receipt metrics** -- capture counts, upload success/failure rates.
-/// 3. **Storage metrics** -- destination distribution as percentages.
-/// 4. **Sync health** -- average queue depth, integrity anomaly counts.
-/// 5. **Moderation** -- disable accounts, view subscription status.
-/// 6. **Audit log** -- immutable log viewer (read-only).
+/// 1. **User Metrics** -- total users, DAU/MAU.
+/// 2. **Subscriptions** -- tier distribution (pie chart).
+/// 3. **Receipts** -- capture counts, upload counts.
+/// 4. **Storage** -- destination distribution as percentages.
+/// 5. **Sync Health** -- upload success/failure rates, average queue depth.
+/// 6. **Integrity** -- anomaly counts.
+/// 7. **Moderation** -- disable accounts, view subscription status.
+/// 8. **Audit Log** -- immutable log viewer (read-only).
 library;
 
 import 'dart:convert';
@@ -18,6 +20,7 @@ import 'dart:convert';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_gen/gen_l10n/app_localizations.dart';
+import 'package:intl/intl.dart';
 
 import '../../../core/db/error_dao.dart';
 import '../../../core/db/integrity_dao.dart';
@@ -27,20 +30,29 @@ import '../../theme/kira_icons.dart';
 import '../../theme/kira_theme.dart';
 
 // ---------------------------------------------------------------------------
-// Data models (admin-only, aggregated)
+// Data models (admin-only, aggregated -- NO PII)
 // ---------------------------------------------------------------------------
 
-/// Aggregated platform metrics -- no PII.
+/// Aggregated platform metrics snapshot.
+///
+/// Every value is pre-aggregated -- no per-user breakdowns, no receipt images,
+/// no personally identifiable information.
 class _AdminMetrics {
   final int totalUsers;
   final int dailyActiveUsers;
   final int monthlyActiveUsers;
-  final Map<String, int> subscriptionTiers; // e.g. {'trial': 120, 'paid': 80}
+
+  /// Subscription tier → user count (e.g. `{'trial': 120, 'paid': 80}`).
+  final Map<String, int> subscriptionTiers;
+
   final int totalReceiptsCaptured;
   final int totalReceiptsUploaded;
   final int uploadSuccessCount;
   final int uploadFailureCount;
-  final Map<String, double> storageDestinations; // e.g. {'Google Drive': 0.45}
+
+  /// Storage provider → percentage (e.g. `{'Google Drive': 0.45}`).
+  final Map<String, double> storageDestinations;
+
   final double avgSyncQueueDepth;
   final int integrityAnomalyCount;
 
@@ -59,7 +71,7 @@ class _AdminMetrics {
   });
 }
 
-/// A single immutable audit log entry.
+/// A single immutable audit-log entry.
 class _AuditLogEntry {
   final String timestamp;
   final String action;
@@ -74,7 +86,7 @@ class _AuditLogEntry {
   });
 }
 
-/// A moderation target (anonymised user record).
+/// An anonymised moderation target.
 class _ModerationUser {
   final String userId;
   final String subscriptionStatus;
@@ -102,6 +114,19 @@ class AdminPanelScreen extends StatefulWidget {
 
 class _AdminPanelScreenState extends State<AdminPanelScreen>
     with SingleTickerProviderStateMixin {
+  // Privacy-safe aggregated metrics only -- NO receipt images or per-user data.
+  //
+  // Sections:
+  //   1. User Metrics        -- total users, DAU, MAU
+  //   2. Subscriptions       -- tier distribution (pie chart)
+  //   3. Receipts            -- total captured / uploaded counts
+  //   4. Storage             -- destination percentages
+  //   5. Sync                -- upload success/failure rates, avg queue depth
+  //   6. Integrity           -- anomaly counts
+  //   7. Moderation          -- disable account, view subscription status
+  //   8. Audit Log           -- immutable audit log viewer
+  // All strings via localization.
+
   late final TabController _tabController;
 
   bool _authenticated = false;
@@ -136,15 +161,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
 
   Future<void> _authenticate() async {
     // Secure admin authentication check. In production this would verify
-    // an admin JWT, hardware token, or elevated OAuth scope. For now, we
+    // an admin JWT, hardware token, or elevated OAuth scope. For now we
     // gate on a locally-persisted admin flag.
     try {
       // TODO: Replace with real admin auth verification.
-      // This placeholder simulates a secure auth check.
       await Future<void>.delayed(const Duration(milliseconds: 500));
-      setState(() {
-        _authenticated = true;
-      });
+      setState(() => _authenticated = true);
       await _loadMetrics();
     } catch (e) {
       setState(() {
@@ -166,19 +188,19 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
       final totalReceipts = await _receiptDao.getTotalCount();
       final pendingCount = await _syncQueueDao.getPendingCount();
       final failedItems = await _syncQueueDao.getFailedItems();
-      final errorCount = await _errorDao.getTotalCount();
       final integrityCount = await _integrityDao.getUnresolvedCount();
 
-      // Build aggregated metrics (in production these would come from
-      // a secure admin API endpoint, not local data).
+      // In production these would come from a secure admin API endpoint,
+      // not local data. Stub values are used for server-side metrics.
       _metrics = _AdminMetrics(
-        totalUsers: 0, // Populated from admin API.
+        totalUsers: 0,
         dailyActiveUsers: 0,
         monthlyActiveUsers: 0,
         subscriptionTiers: const {'trial': 0, 'paid': 0},
         totalReceiptsCaptured: totalReceipts,
         totalReceiptsUploaded: totalReceipts - pendingCount,
-        uploadSuccessCount: totalReceipts - pendingCount - failedItems.length,
+        uploadSuccessCount:
+            totalReceipts - pendingCount - failedItems.length,
         uploadFailureCount: failedItems.length,
         storageDestinations: const {
           'Google Drive': 0.0,
@@ -192,7 +214,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         integrityAnomalyCount: integrityCount,
       );
 
-      // Load audit log and moderation data (placeholder).
+      // Audit log and moderation users are populated from the admin API.
       _auditLog = [];
       _moderationUsers = [];
 
@@ -216,57 +238,37 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     final colors = theme.colorScheme;
     final text = theme.textTheme;
 
+    // Awaiting admin auth check.
     if (!_authenticated) {
       return Scaffold(
-        appBar: AppBar(title: Text(l10n.settings)), // fallback title
+        appBar: AppBar(title: Text(l10n.adminPanel)),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
+    // Auth or data-load error.
     if (_errorMessage != null) {
       return Scaffold(
         appBar: AppBar(
-          leading: _buildBackButton(l10n),
-          title: Text(l10n.settings),
+          leading: _backButton(l10n),
+          title: Text(l10n.adminPanel),
         ),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(KiraDimens.spacingXl),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(KiraIcons.error, size: KiraDimens.iconXl, color: colors.error),
-                const SizedBox(height: KiraDimens.spacingLg),
-                Text(
-                  _errorMessage!,
-                  style: text.bodyMedium,
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: KiraDimens.spacingXl),
-                ElevatedButton.icon(
-                  onPressed: _loadMetrics,
-                  icon: const Icon(KiraIcons.refresh, size: KiraDimens.iconSm),
-                  label: Text(l10n.syncNow),
-                ),
-              ],
-            ),
-          ),
-        ),
+        body: _buildCenteredError(l10n, colors, text),
       );
     }
 
     return Scaffold(
       appBar: AppBar(
-        leading: _buildBackButton(l10n),
-        title: Text(l10n.settings), // "Admin Panel" via l10n
+        leading: _backButton(l10n),
+        title: Text(l10n.adminPanel),
         bottom: TabBar(
           controller: _tabController,
           isScrollable: true,
           tabs: [
-            Tab(text: l10n.reports), // Overview
-            Tab(text: l10n.syncStatus), // Sync Health
-            Tab(text: l10n.settingsAbout), // Moderation
-            Tab(text: l10n.integrityAlerts), // Audit Log
+            Tab(text: l10n.adminMetrics),
+            Tab(text: l10n.syncStatus),
+            Tab(text: l10n.settings),
+            Tab(text: l10n.integrityAlerts),
           ],
         ),
         actions: [
@@ -291,7 +293,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildBackButton(AppLocalizations l10n) {
+  Widget _backButton(AppLocalizations l10n) {
     return IconButton(
       icon: const Icon(KiraIcons.arrowBack),
       onPressed: () => Navigator.of(context).pop(),
@@ -299,9 +301,40 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  // -------------------------------------------------------------------------
-  // Overview Tab
-  // -------------------------------------------------------------------------
+  Widget _buildCenteredError(
+    AppLocalizations l10n,
+    ColorScheme colors,
+    TextTheme text,
+  ) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(KiraDimens.spacingXl),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(KiraIcons.error,
+                size: KiraDimens.iconXl, color: colors.error),
+            const SizedBox(height: KiraDimens.spacingLg),
+            Text(
+              _errorMessage!,
+              style: text.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: KiraDimens.spacingXl),
+            ElevatedButton.icon(
+              onPressed: _loadMetrics,
+              icon: const Icon(KiraIcons.refresh, size: KiraDimens.iconSm),
+              label: Text(l10n.syncNow),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // =========================================================================
+  // Tab 1: Overview (Users, Subscriptions, Receipts, Storage)
+  // =========================================================================
 
   Widget _buildOverviewTab(
     AppLocalizations l10n,
@@ -313,83 +346,91 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     return ListView(
       padding: const EdgeInsets.all(KiraDimens.spacingLg),
       children: [
-        // User metrics row
-        _buildSectionHeader(l10n.settingsAbout, KiraIcons.team, text),
+        // -- 1. User Metrics --
+        _sectionHeader(l10n.adminTotalUsers, KiraIcons.team, text),
         const SizedBox(height: KiraDimens.spacingSm),
         Row(
           children: [
-            Expanded(child: _buildMetricCard(
-              l10n.settingsAbout,
-              m.totalUsers.toString(),
-              KiraIcons.person,
-              colors,
-              text,
-            )),
+            Expanded(
+              child: _metricCard(
+                l10n.adminTotalUsers,
+                _formatInt(m.totalUsers),
+                KiraIcons.person,
+                colors,
+                text,
+              ),
+            ),
             const SizedBox(width: KiraDimens.spacingSm),
-            Expanded(child: _buildMetricCard(
-              'DAU',
-              m.dailyActiveUsers.toString(),
-              KiraIcons.calendar,
-              colors,
-              text,
-            )),
+            Expanded(
+              child: _metricCard(
+                l10n.adminActiveUsers,
+                _formatInt(m.dailyActiveUsers),
+                KiraIcons.calendar,
+                colors,
+                text,
+              ),
+            ),
             const SizedBox(width: KiraDimens.spacingSm),
-            Expanded(child: _buildMetricCard(
-              'MAU',
-              m.monthlyActiveUsers.toString(),
-              KiraIcons.dateRange,
-              colors,
-              text,
-            )),
+            Expanded(
+              child: _metricCard(
+                'MAU',
+                _formatInt(m.monthlyActiveUsers),
+                KiraIcons.dateRange,
+                colors,
+                text,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: KiraDimens.spacingXl),
 
-        // Subscription tier distribution pie chart
-        _buildSectionHeader(l10n.settingsAbout, KiraIcons.chart, text),
+        // -- 2. Subscription tiers (pie chart) --
+        _sectionHeader(l10n.reports, KiraIcons.chart, text),
         const SizedBox(height: KiraDimens.spacingSm),
         _buildSubscriptionPieChart(m, colors, text),
         const SizedBox(height: KiraDimens.spacingXl),
 
-        // Receipt metrics
-        _buildSectionHeader(l10n.reports, KiraIcons.receipt, text),
+        // -- 3. Receipt counts --
+        _sectionHeader(l10n.adminTotalReceipts, KiraIcons.receipt, text),
         const SizedBox(height: KiraDimens.spacingSm),
         Row(
           children: [
-            Expanded(child: _buildMetricCard(
-              l10n.receipt,
-              m.totalReceiptsCaptured.toString(),
-              KiraIcons.camera,
-              colors,
-              text,
-            )),
+            Expanded(
+              child: _metricCard(
+                l10n.receiptCount,
+                _formatInt(m.totalReceiptsCaptured),
+                KiraIcons.camera,
+                colors,
+                text,
+              ),
+            ),
             const SizedBox(width: KiraDimens.spacingSm),
-            Expanded(child: _buildMetricCard(
-              l10n.syncStatus,
-              m.totalReceiptsUploaded.toString(),
-              KiraIcons.syncDone,
-              colors,
-              text,
-            )),
+            Expanded(
+              child: _metricCard(
+                l10n.syncComplete,
+                _formatInt(m.totalReceiptsUploaded),
+                KiraIcons.syncDone,
+                colors,
+                text,
+              ),
+            ),
           ],
         ),
         const SizedBox(height: KiraDimens.spacingSm),
-
-        // Upload success/failure
         _buildUploadRateCard(m, l10n, colors, text),
         const SizedBox(height: KiraDimens.spacingXl),
 
-        // Storage destination percentages
-        _buildSectionHeader(l10n.syncStatus, KiraIcons.cloud, text),
+        // -- 4. Storage destinations --
+        _sectionHeader(l10n.storageModeTitle, KiraIcons.cloud, text),
         const SizedBox(height: KiraDimens.spacingSm),
-        _buildStorageDestinationsCard(m, colors, text),
+        _buildStorageCard(m, colors, text),
       ],
     );
   }
 
-  // -------------------------------------------------------------------------
-  // Sync Health Tab
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // Tab 2: Sync Health (Success/Failure Rates, Queue Depth, Integrity)
+  // =========================================================================
 
   Widget _buildSyncHealthTab(
     AppLocalizations l10n,
@@ -401,10 +442,20 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     return ListView(
       padding: const EdgeInsets.all(KiraDimens.spacingLg),
       children: [
-        // Average sync queue depth
-        _buildSectionHeader(l10n.syncStatus, KiraIcons.sync, text),
+        // Upload success/failure rates
+        _sectionHeader(
+          l10n.adminUploadSuccessRate,
+          KiraIcons.sync,
+          text,
+        ),
         const SizedBox(height: KiraDimens.spacingSm),
-        _buildMetricCard(
+        _buildUploadRateCard(m, l10n, colors, text),
+        const SizedBox(height: KiraDimens.spacingXl),
+
+        // Average sync queue depth
+        _sectionHeader(l10n.syncStatus, KiraIcons.syncPending, text),
+        const SizedBox(height: KiraDimens.spacingSm),
+        _metricCard(
           l10n.syncStatus,
           m.avgSyncQueueDepth.toStringAsFixed(1),
           KiraIcons.syncPending,
@@ -413,10 +464,10 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         ),
         const SizedBox(height: KiraDimens.spacingXl),
 
-        // Integrity anomalies
-        _buildSectionHeader(l10n.integrityAlerts, KiraIcons.integrity, text),
+        // Integrity anomaly count
+        _sectionHeader(l10n.integrityAlerts, KiraIcons.integrity, text),
         const SizedBox(height: KiraDimens.spacingSm),
-        _buildMetricCard(
+        _metricCard(
           l10n.integrityAlerts,
           m.integrityAnomalyCount.toString(),
           m.integrityAnomalyCount > 0
@@ -428,19 +479,13 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               ? KiraColors.failedRed
               : KiraColors.syncedGreen,
         ),
-        const SizedBox(height: KiraDimens.spacingXl),
-
-        // Upload success/failure rates
-        _buildSectionHeader(l10n.reports, KiraIcons.chart, text),
-        const SizedBox(height: KiraDimens.spacingSm),
-        _buildUploadRateCard(m, l10n, colors, text),
       ],
     );
   }
 
-  // -------------------------------------------------------------------------
-  // Moderation Tab
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // Tab 3: Moderation (disable account, view sub status)
+  // =========================================================================
 
   Widget _buildModerationTab(
     AppLocalizations l10n,
@@ -452,14 +497,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              KiraIcons.team,
-              size: KiraDimens.iconXl,
-              color: colors.outline,
-            ),
+            Icon(KiraIcons.team,
+                size: KiraDimens.iconXl, color: colors.outline),
             const SizedBox(height: KiraDimens.spacingLg),
             Text(
-              l10n.settingsAbout, // placeholder for "No users to moderate"
+              l10n.noReceipts, // placeholder for "No users to moderate"
               style: text.bodyMedium?.copyWith(color: colors.outline),
             ),
           ],
@@ -507,14 +549,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                   const SizedBox(height: KiraDimens.spacingXs),
                   Row(
                     children: [
-                      _buildStatusChip(
+                      _statusChip(
                         user.subscriptionStatus,
                         colors,
                         text,
                       ),
                       if (user.isDisabled) ...[
                         const SizedBox(width: KiraDimens.spacingXs),
-                        _buildStatusChip(
+                        _statusChip(
                           l10n.delete, // "Disabled"
                           colors,
                           text,
@@ -533,7 +575,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
             ),
             PopupMenuButton<String>(
               icon: const Icon(KiraIcons.moreVert),
-              onSelected: (action) => _handleModerationAction(action, user),
+              onSelected: (action) =>
+                  _handleModerationAction(action, user),
               itemBuilder: (context) => [
                 PopupMenuItem(
                   value: user.isDisabled ? 'enable' : 'disable',
@@ -577,13 +620,14 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
 
     if (confirmed == true) {
       // TODO: Call admin API to disable/enable the account.
+      // The action is logged in the immutable audit trail server-side.
       await _loadMetrics();
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Audit Log Tab
-  // -------------------------------------------------------------------------
+  // =========================================================================
+  // Tab 4: Audit Log (immutable, read-only)
+  // =========================================================================
 
   Widget _buildAuditLogTab(
     AppLocalizations l10n,
@@ -595,14 +639,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              KiraIcons.summary,
-              size: KiraDimens.iconXl,
-              color: colors.outline,
-            ),
+            Icon(KiraIcons.summary,
+                size: KiraDimens.iconXl, color: colors.outline),
             const SizedBox(height: KiraDimens.spacingLg),
             Text(
-              l10n.settingsAbout, // placeholder for "No audit entries"
+              l10n.integrityNoAlerts, // "No audit entries"
               style: text.bodyMedium?.copyWith(color: colors.outline),
             ),
           ],
@@ -634,27 +675,20 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
           children: [
             Row(
               children: [
-                Icon(
-                  KiraIcons.clock,
-                  size: KiraDimens.iconSm,
-                  color: colors.outline,
-                ),
+                Icon(KiraIcons.clock,
+                    size: KiraDimens.iconSm, color: colors.outline),
                 const SizedBox(width: KiraDimens.spacingXs),
                 Text(
-                  entry.timestamp,
-                  style: text.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
-                  ),
+                  _formatTimestamp(entry.timestamp),
+                  style: text.bodySmall
+                      ?.copyWith(fontFamily: 'monospace'),
                 ),
               ],
             ),
             const SizedBox(height: KiraDimens.spacingSm),
             Text(entry.action, style: text.titleSmall),
             const SizedBox(height: KiraDimens.spacingXs),
-            Text(
-              entry.details,
-              style: text.bodyMedium,
-            ),
+            Text(entry.details, style: text.bodyMedium),
             const SizedBox(height: KiraDimens.spacingXs),
             Text(
               entry.actorId,
@@ -669,11 +703,11 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  // -------------------------------------------------------------------------
+  // =========================================================================
   // Shared widgets
-  // -------------------------------------------------------------------------
+  // =========================================================================
 
-  Widget _buildSectionHeader(String title, IconData icon, TextTheme text) {
+  Widget _sectionHeader(String title, IconData icon, TextTheme text) {
     return Row(
       children: [
         Icon(icon, size: KiraDimens.iconSm),
@@ -683,7 +717,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildMetricCard(
+  Widget _metricCard(
     String label,
     String value,
     IconData icon,
@@ -719,7 +753,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildStatusChip(
+  Widget _statusChip(
     String label,
     ColorScheme colors,
     TextTheme text, {
@@ -808,12 +842,12 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
               ),
             ),
             const SizedBox(height: KiraDimens.spacingMd),
-            // Legend
             Wrap(
               spacing: KiraDimens.spacingLg,
               runSpacing: KiraDimens.spacingSm,
               children: tiers.entries.map((entry) {
-                final color = tierColors[entry.key] ?? KiraColors.mediumGrey;
+                final color =
+                    tierColors[entry.key] ?? KiraColors.mediumGrey;
                 return Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -827,7 +861,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
                     ),
                     const SizedBox(width: KiraDimens.spacingXs),
                     Text(
-                      '${entry.key}: ${entry.value}',
+                      '${entry.key}: ${_formatInt(entry.value)}',
                       style: text.bodySmall,
                     ),
                   ],
@@ -862,20 +896,18 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(l10n.syncStatus, style: text.titleSmall),
+            Text(l10n.adminUploadSuccessRate, style: text.titleSmall),
             const SizedBox(height: KiraDimens.spacingMd),
-            // Success bar
-            _buildRateBar(
-              label: l10n.save,
+            _rateBar(
+              label: l10n.success,
               value: successRate,
               count: metrics.uploadSuccessCount,
               color: KiraColors.syncedGreen,
               text: text,
             ),
             const SizedBox(height: KiraDimens.spacingSm),
-            // Failure bar
-            _buildRateBar(
-              label: l10n.delete,
+            _rateBar(
+              label: l10n.error,
               value: failureRate,
               count: metrics.uploadFailureCount,
               color: KiraColors.failedRed,
@@ -887,7 +919,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
     );
   }
 
-  Widget _buildRateBar({
+  Widget _rateBar({
     required String label,
     required double value,
     required int count,
@@ -903,7 +935,8 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
             Text(label, style: text.bodySmall),
             Text(
               '${value.toStringAsFixed(1)}% ($count)',
-              style: text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
+              style:
+                  text.bodySmall?.copyWith(fontWeight: FontWeight.w600),
             ),
           ],
         ),
@@ -925,7 +958,7 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
   // Storage destinations card
   // -------------------------------------------------------------------------
 
-  Widget _buildStorageDestinationsCard(
+  Widget _buildStorageCard(
     _AdminMetrics metrics,
     ColorScheme colors,
     TextTheme text,
@@ -947,11 +980,13 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: destinations.entries.map((entry) {
-            final color = providerColors[entry.key] ?? KiraColors.mediumGrey;
+            final color =
+                providerColors[entry.key] ?? KiraColors.mediumGrey;
             final percentage = entry.value * 100;
             return Padding(
-              padding: const EdgeInsets.only(bottom: KiraDimens.spacingSm),
-              child: _buildRateBar(
+              padding:
+                  const EdgeInsets.only(bottom: KiraDimens.spacingSm),
+              child: _rateBar(
                 label: entry.key,
                 value: percentage,
                 count: 0,
@@ -963,5 +998,22 @@ class _AdminPanelScreenState extends State<AdminPanelScreen>
         ),
       ),
     );
+  }
+
+  // =========================================================================
+  // Formatting helpers
+  // =========================================================================
+
+  String _formatInt(int value) {
+    return NumberFormat('#,###').format(value);
+  }
+
+  String _formatTimestamp(String isoTimestamp) {
+    try {
+      final dt = DateTime.parse(isoTimestamp).toLocal();
+      return DateFormat('yyyy-MM-dd HH:mm:ss').format(dt);
+    } catch (_) {
+      return isoTimestamp;
+    }
   }
 }

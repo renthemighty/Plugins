@@ -12,7 +12,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -107,14 +106,8 @@ class DropboxProvider implements StorageProvider {
   // ---------------------------------------------------------------------------
 
   @override
-  Future<void> uploadFile(String localPath, String remotePath) async {
-    final file = File(localPath);
-    if (!(await file.exists())) {
-      throw StorageException('Local file does not exist: $localPath');
-    }
-
-    final bytes = await file.readAsBytes();
-    final path = _normalize(remotePath);
+  Future<void> uploadFile(String remotePath, String filename, List<int> data) async {
+    final path = _normalize('$remotePath/$filename');
     final token = await _accessToken();
 
     await retryWithBackoff(() async {
@@ -130,30 +123,34 @@ class DropboxProvider implements StorageProvider {
             'mute': true,
           }),
         },
-        body: bytes,
+        body: data,
       );
       _checkResponse(resp);
     });
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
-    final path = _normalize(remotePath);
+  Future<List<int>?> downloadFile(String remotePath, String filename) async {
+    final path = _normalize('$remotePath/$filename');
     final token = await _accessToken();
 
-    final response = await retryWithBackoff(() async {
-      final resp = await _http.post(
-        Uri.parse('$_contentBase/files/download'),
-        headers: {
-          ..._authHeaders(token),
-          'Dropbox-API-Arg': jsonEncode({'path': path}),
-        },
-      );
-      _checkResponse(resp);
-      return resp;
-    });
+    try {
+      final response = await retryWithBackoff(() async {
+        final resp = await _http.post(
+          Uri.parse('$_contentBase/files/download'),
+          headers: {
+            ..._authHeaders(token),
+            'Dropbox-API-Arg': jsonEncode({'path': path}),
+          },
+        );
+        _checkResponse(resp);
+        return resp;
+      });
 
-    await File(localPath).writeAsBytes(response.bodyBytes, flush: true);
+      return response.bodyBytes;
+    } on StorageNotFoundException {
+      return null;
+    }
   }
 
   @override

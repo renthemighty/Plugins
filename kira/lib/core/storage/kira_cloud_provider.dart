@@ -391,14 +391,9 @@ class KiraCloudProvider implements StorageProvider {
   }
 
   @override
-  Future<void> uploadFile(String localPath, String remotePath) async {
-    final file = File(localPath);
-    if (!(await file.exists())) {
-      throw StorageException('Local file does not exist: $localPath');
-    }
-
-    final bytes = await file.readAsBytes();
+  Future<void> uploadFile(String remotePath, String filename, List<int> data) async {
     final token = await _accessToken();
+    final fullPath = '$remotePath/$filename';
 
     await retryWithBackoff(() async {
       final request = http.MultipartRequest(
@@ -406,12 +401,12 @@ class KiraCloudProvider implements StorageProvider {
         Uri.parse('$_kiraApiBase/storage/files'),
       )
         ..headers.addAll(_authHeaders(token))
-        ..fields['path'] = remotePath
+        ..fields['path'] = fullPath
         ..fields['workspace_id'] = (await getActiveWorkspace()) ?? ''
         ..files.add(http.MultipartFile.fromBytes(
           'file',
-          bytes,
-          filename: remotePath.split('/').last,
+          data,
+          filename: filename,
         ));
 
       final streamed = await _http.send(request);
@@ -421,24 +416,29 @@ class KiraCloudProvider implements StorageProvider {
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
+  Future<List<int>?> downloadFile(String remotePath, String filename) async {
     final token = await _accessToken();
     final workspaceId = await getActiveWorkspace();
+    final fullPath = '$remotePath/$filename';
 
     final uri = Uri.parse('$_kiraApiBase/storage/files/content').replace(
       queryParameters: {
-        'path': remotePath,
+        'path': fullPath,
         if (workspaceId != null) 'workspace_id': workspaceId,
       },
     );
 
-    final response = await retryWithBackoff(() async {
-      final resp = await _http.get(uri, headers: _authHeaders(token));
-      _checkResponse(resp);
-      return resp;
-    });
+    try {
+      final response = await retryWithBackoff(() async {
+        final resp = await _http.get(uri, headers: _authHeaders(token));
+        _checkResponse(resp);
+        return resp;
+      });
 
-    await File(localPath).writeAsBytes(response.bodyBytes, flush: true);
+      return response.bodyBytes;
+    } on StorageNotFoundException {
+      return null;
+    }
   }
 
   @override

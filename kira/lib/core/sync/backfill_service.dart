@@ -35,7 +35,6 @@ import '../services/checksum_service.dart';
 import '../services/filename_allocator.dart';
 import '../services/folder_service.dart';
 import '../services/index_service.dart';
-import '../storage/storage_provider.dart';
 
 // ---------------------------------------------------------------------------
 // BackfillStats
@@ -314,7 +313,8 @@ class BackfillService {
     }
 
     // Upload the image file.
-    await storageProvider.uploadFile(localPath, '$remotePath/$uploadFilename');
+    final imageBytes = await File(localPath).readAsBytes();
+    await storageProvider.uploadFile(remotePath, uploadFilename, imageBytes);
 
     // 5. Merge into the day index safely.
     final receiptForIndex = uploadFilename != receipt.filename

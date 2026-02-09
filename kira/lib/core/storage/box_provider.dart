@@ -10,7 +10,6 @@
 library;
 
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -81,40 +80,26 @@ class BoxProvider implements StorageProvider {
   // ---------------------------------------------------------------------------
 
   @override
-  Future<void> uploadFile(String localPath, String remotePath) async {
-    final file = File(localPath);
-    if (!(await file.exists())) {
-      throw StorageException('Local file does not exist: $localPath');
-    }
-
-    final parentPath = _parentOf(remotePath);
-    final fileName = _nameOf(remotePath);
-    final parentId = await _ensureFolderChain(parentPath);
-    final bytes = await file.readAsBytes();
+  Future<void> uploadFile(String remotePath, String filename, List<int> data) async {
+    final parentId = await _ensureFolderChain(remotePath);
 
     // Check if file exists -- if so, upload a new version.
-    final existingId = await _findFileId(fileName, parentId);
+    final existingId = await _findFileId(filename, parentId);
 
     if (existingId != null) {
-      await _uploadNewVersion(existingId, bytes, fileName);
+      await _uploadNewVersion(existingId, data, filename);
     } else {
-      await _uploadNewFile(parentId, bytes, fileName);
+      await _uploadNewFile(parentId, data, filename);
     }
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
-    final parentPath = _parentOf(remotePath);
-    final fileName = _nameOf(remotePath);
-    final parentId = await _resolveFolderId(parentPath);
-    if (parentId == null) {
-      throw StorageNotFoundException('Folder not found: $parentPath');
-    }
+  Future<List<int>?> downloadFile(String remotePath, String filename) async {
+    final parentId = await _resolveFolderId(remotePath);
+    if (parentId == null) return null;
 
-    final fileId = await _findFileId(fileName, parentId);
-    if (fileId == null) {
-      throw StorageNotFoundException('File not found: $remotePath');
-    }
+    final fileId = await _findFileId(filename, parentId);
+    if (fileId == null) return null;
 
     final token = await _accessToken();
     final response = await retryWithBackoff(() async {
@@ -128,7 +113,7 @@ class BoxProvider implements StorageProvider {
       return resp;
     });
 
-    await File(localPath).writeAsBytes(response.bodyBytes, flush: true);
+    return response.bodyBytes;
   }
 
   @override

@@ -27,6 +27,8 @@ import 'folder_service.dart';
 // ---------------------------------------------------------------------------
 
 /// A single day pointer inside a [MonthIndex].
+///
+/// Also exported as [DaySummary] for use in month-level merge tests.
 class MonthDayEntry {
   /// The date in `YYYY-MM-DD` format.
   final String date;
@@ -38,11 +40,22 @@ class MonthDayEntry {
   /// currency code (e.g. `{'CAD': 142.30, 'USD': 55.00}`).
   final Map<String, double> totalByCurrency;
 
+  /// ISO-8601 UTC timestamp of the last modification to this day's data.
+  final String lastUpdated;
+
+  /// Whether this entry was produced by a conflict resolution.
+  final bool conflict;
+
   const MonthDayEntry({
     required this.date,
     required this.receiptCount,
     required this.totalByCurrency,
+    this.lastUpdated = '',
+    this.conflict = false,
   });
+
+  /// Alias for [totalByCurrency] (plural form used in some contexts).
+  Map<String, double> get totalsByCurrency => totalByCurrency;
 
   factory MonthDayEntry.fromJson(Map<String, dynamic> json) {
     final rawTotals = json['total_by_currency'] as Map<String, dynamic>? ?? {};
@@ -51,6 +64,8 @@ class MonthDayEntry {
       receiptCount: json['receipt_count'] as int,
       totalByCurrency: rawTotals
           .map((k, v) => MapEntry(k, (v as num).toDouble())),
+      lastUpdated: json['last_updated'] as String? ?? '',
+      conflict: json['conflict'] as bool? ?? false,
     );
   }
 
@@ -58,17 +73,23 @@ class MonthDayEntry {
         'date': date,
         'receipt_count': receiptCount,
         'total_by_currency': totalByCurrency,
+        'last_updated': lastUpdated,
+        'conflict': conflict,
       };
 
   MonthDayEntry copyWith({
     String? date,
     int? receiptCount,
     Map<String, double>? totalByCurrency,
+    String? lastUpdated,
+    bool? conflict,
   }) {
     return MonthDayEntry(
       date: date ?? this.date,
       receiptCount: receiptCount ?? this.receiptCount,
       totalByCurrency: totalByCurrency ?? this.totalByCurrency,
+      lastUpdated: lastUpdated ?? this.lastUpdated,
+      conflict: conflict ?? this.conflict,
     );
   }
 
@@ -91,6 +112,9 @@ class MonthDayEntry {
   int get hashCode => Object.hash(date, receiptCount, totalByCurrency.length);
 }
 
+/// Type alias for [MonthDayEntry], used in month-level merge contexts.
+typedef DaySummary = MonthDayEntry;
+
 /// Represents the `index.json` stored in a month folder (e.g. `2025/2025-06/`).
 class MonthIndex {
   /// The year-month this index covers, in `YYYY-MM` format.
@@ -102,12 +126,29 @@ class MonthIndex {
   /// One entry per day that has at least one receipt.
   final List<MonthDayEntry> days;
 
-  const MonthIndex({
-    required this.yearMonth,
+  MonthIndex({
+    String? yearMonth,
+    String? month,
     this.schemaVersion = 1,
     required this.lastUpdated,
     required this.days,
-  });
+  }) : yearMonth = yearMonth ?? month ?? '';
+
+  /// Alias for [yearMonth].
+  String get month => yearMonth;
+
+  /// Aggregated totals across all days, keyed by currency code.
+  /// Returns `null` if there are no days.
+  Map<String, double>? get totals {
+    if (days.isEmpty) return null;
+    final result = <String, double>{};
+    for (final day in days) {
+      for (final entry in day.totalByCurrency.entries) {
+        result[entry.key] = (result[entry.key] ?? 0) + entry.value;
+      }
+    }
+    return result;
+  }
 
   factory MonthIndex.fromJson(Map<String, dynamic> json) {
     final rawDays = json['days'] as List<dynamic>? ?? <dynamic>[];
@@ -177,7 +218,8 @@ class MonthIndex {
           // Pick the entry from the index with the later overall lastUpdated.
           final localTime = DateTime.parse(lastUpdated);
           final remoteTime = DateTime.parse(remote.lastUpdated);
-          merged.add(remoteTime.isAfter(localTime) ? remoteEntry : localEntry);
+          final winner = remoteTime.isAfter(localTime) ? remoteEntry : localEntry;
+          merged.add(winner.copyWith(conflict: true));
         }
       }
     }
@@ -515,6 +557,14 @@ class IndexService {
       updatedAt: receipt.updatedAt,
       conflict: receipt.conflict,
       supersedesFilename: receipt.supersedesFilename,
+      timezone: receipt.timezone,
+      region: receipt.region,
+      notes: receipt.notes,
+      taxApplicable: receipt.taxApplicable,
+      deviceId: receipt.deviceId,
+      captureSessionId: receipt.captureSessionId,
+      source: receipt.source,
+      createdAt: receipt.createdAt,
     );
   }
 }

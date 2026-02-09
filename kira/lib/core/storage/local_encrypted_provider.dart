@@ -140,35 +140,34 @@ class LocalEncryptedProvider implements StorageProvider {
   // ---------------------------------------------------------------------------
 
   @override
-  Future<void> uploadFile(String localPath, String remotePath) async {
+  Future<void> uploadFile(String remotePath, String filename, List<int> data) async {
     _assertUnlocked();
 
-    final sourceFile = File(localPath);
-    if (!(await sourceFile.exists())) {
-      throw StorageException('Local file does not exist: $localPath');
-    }
-
-    final destFile = await _resolveFile(remotePath);
+    final fullPath = '$remotePath/$filename';
+    final destFile = await _resolveFile(fullPath);
     await destFile.parent.create(recursive: true);
 
-    await _encryption.encryptFile(localPath, destFile.path, _key!);
+    final ciphertext = _encryption.encrypt(Uint8List.fromList(data), _key!);
+    await destFile.writeAsBytes(ciphertext, flush: true);
   }
 
   @override
-  Future<void> downloadFile(String remotePath, String localPath) async {
+  Future<List<int>?> downloadFile(String remotePath, String filename) async {
     _assertUnlocked();
 
-    final sourceFile = await _resolveFile(remotePath);
-    if (!(await sourceFile.exists())) {
-      throw StorageNotFoundException('File not found: $remotePath');
-    }
+    final fullPath = '$remotePath/$filename';
+    final sourceFile = await _resolveFile(fullPath);
+    if (!(await sourceFile.exists())) return null;
 
-    final destDir = Directory(p.dirname(localPath));
-    if (!(await destDir.exists())) {
-      await destDir.create(recursive: true);
+    final ciphertext = await sourceFile.readAsBytes();
+    try {
+      return _encryption.decrypt(Uint8List.fromList(ciphertext), _key!);
+    } on EncryptionException catch (e) {
+      throw StorageException(
+        'Failed to decrypt file: $fullPath',
+        cause: e,
+      );
     }
-
-    await _encryption.decryptFile(sourceFile.path, localPath, _key!);
   }
 
   @override

@@ -13,6 +13,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kira/core/models/day_index.dart';
 import 'package:kira/core/models/month_index.dart';
 
+// DaySummary is a typedef for MonthDayEntry, re-exported from month_index.dart.
+
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
@@ -67,7 +69,7 @@ DaySummary _makeDaySummary({
   return DaySummary(
     date: date,
     receiptCount: receiptCount,
-    totalsByCurrency: totalsByCurrency,
+    totalByCurrency: totalsByCurrency,
     lastUpdated: lastUpdated,
     conflict: conflict,
   );
@@ -80,7 +82,7 @@ MonthIndex _makeMonthIndex({
   int schemaVersion = 1,
 }) {
   return MonthIndex(
-    month: month,
+    yearMonth: month,
     lastUpdated: lastUpdated,
     days: days,
     schemaVersion: schemaVersion,
