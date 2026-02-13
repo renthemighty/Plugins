@@ -2,8 +2,8 @@
 /**
  * Plugin Name: WooCommerce Top Spenders Export
  * Plugin URI: https://github.com/renthemighty/Plugins
- * Description: Export the top 500 customers by total revenue as a CSV file with rate limiting and batch processing
- * Version: 1.1.0
+ * Description: Export all customers with purchase history by total revenue as a CSV file with rate limiting and batch processing
+ * Version: 1.2.0
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -21,7 +21,7 @@ defined('ABSPATH') || exit;
 class WC_Top_Spenders_Export {
 
     private static $instance = null;
-    private const BATCH_SIZE = 50; // Process 50 customers per batch
+    private const BATCH_SIZE = 100; // Process 100 customers per batch
     private const RATE_LIMIT_MS = 1000; // 1 second between batches
     private const TRANSIENT_EXPIRY = 3600; // 1 hour
 
@@ -67,14 +67,14 @@ class WC_Top_Spenders_Export {
             'wc-top-spenders-admin',
             plugins_url('', __FILE__) . '/assets/admin.css',
             [],
-            '1.1.0'
+            '1.2.0'
         );
 
         wp_enqueue_script(
             'wc-top-spenders-admin',
             plugins_url('', __FILE__) . '/assets/admin.js',
             ['jquery'],
-            '1.1.0',
+            '1.2.0',
             true
         );
 
@@ -101,7 +101,7 @@ class WC_Top_Spenders_Export {
         ?>
         <div class="wrap wc-top-spenders-wrap">
             <h1><?php _e('Top Spenders Export', 'wc-top-spenders'); ?></h1>
-            <p><?php _e('Export the top 500 customers by total revenue to a CSV file.', 'wc-top-spenders'); ?></p>
+            <p><?php _e('Export all customers with purchase history, sorted by total spend, to a CSV file.', 'wc-top-spenders'); ?></p>
 
             <div class="wc-top-spenders-card">
                 <h2><?php _e('Export Settings', 'wc-top-spenders'); ?></h2>
@@ -115,12 +115,12 @@ class WC_Top_Spenders_Export {
 
                 <p class="wc-top-spenders-info">
                     <strong><?php _e('Note:', 'wc-top-spenders'); ?></strong>
-                    <?php _e('The export uses batch processing with rate limiting (1 request per second) to avoid server overload.', 'wc-top-spenders'); ?>
+                    <?php _e('The export processes all customers in batches of 100 with a 1 request per second rate limit to avoid server overload.', 'wc-top-spenders'); ?>
                 </p>
 
                 <div id="wc-top-spenders-export-container">
                     <button type="button" id="wc-top-spenders-start-export" class="button button-primary button-large">
-                        <?php _e('Export Top 500 Spenders', 'wc-top-spenders'); ?>
+                        <?php _e('Export All Spenders', 'wc-top-spenders'); ?>
                     </button>
 
                     <div id="wc-top-spenders-progress" style="display: none;">
@@ -253,8 +253,8 @@ class WC_Top_Spenders_Export {
                 throw new Exception(__('No customers found with completed or processing orders.', 'wc-top-spenders'));
             }
 
-            // Limit to 500
-            $total_to_process = min($total_customers, 500);
+            // Export all customers
+            $total_to_process = $total_customers;
             $total_batches = ceil($total_to_process / self::BATCH_SIZE);
 
             // Store export session data

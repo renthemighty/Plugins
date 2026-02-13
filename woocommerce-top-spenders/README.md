@@ -1,11 +1,11 @@
 # WooCommerce Top Spenders Export
 
-A robust WordPress plugin that allows you to export the top 500 customers by total revenue from your WooCommerce store with intelligent batch processing and rate limiting to prevent server overload.
+A robust WordPress plugin that exports all customers with any purchase history from your WooCommerce store, sorted by total spend, with intelligent batch processing and rate limiting to prevent server overload.
 
 ## Features
 
-- Export top 500 customers by total spend
-- **Batch processing** - Processes data in chunks of 50 customers to avoid memory issues
+- Export all customers with any purchase history, sorted by total spend
+- **Batch processing** - Processes data in chunks of 100 customers to avoid memory issues
 - **Rate limiting** - 1 second delay between batches to prevent server overload
 - **Real-time progress indicator** - Visual progress bar with status updates
 - **AJAX-powered** - Non-blocking export process
@@ -33,8 +33,8 @@ A robust WordPress plugin that allows you to export the top 500 customers by tot
 ## Usage
 
 1. Go to the 'Top Spenders' page in your WordPress admin
-2. Click the "Export Top 500 Spenders" button
-3. Monitor the progress bar as the export processes in batches
+2. Click the "Export All Spenders" button
+3. Monitor the progress bar as the export processes in batches of 100
 4. Once complete, click "Download CSV File" to get your export
 5. The CSV file will include the following columns:
    - Name (Customer's full name)
@@ -45,11 +45,12 @@ A robust WordPress plugin that allows you to export the top 500 customers by tot
 ## How It Works
 
 ### Batch Processing
-The plugin processes customer data in batches of 50 to avoid overwhelming the server. Each batch is processed sequentially with a 1-second delay between batches to ensure optimal server performance.
+The plugin processes all customer data in batches of 100 to avoid overwhelming the server. Each batch is processed sequentially with a 1-second delay between batches to ensure optimal server performance.
 
 ### Rate Limiting
 To prevent server overload and ensure compatibility with shared hosting environments, the plugin enforces a rate limit of 1 request per second. This means:
-- For 500 customers: approximately 10 batches × 1 second = ~10 seconds total
+- For 1,000 customers: approximately 10 batches × 1 second = ~10 seconds total
+- For 10,000 customers: approximately 100 batches × 1 second = ~100 seconds total
 - Server load remains minimal throughout the process
 - No risk of timeout errors on most hosting environments
 
@@ -63,7 +64,7 @@ During the export process, data is temporarily stored in WordPress transients wi
 
 The exported CSV file includes:
 - UTF-8 BOM for Excel compatibility
-- Top 500 customers sorted by total spend (highest to lowest)
+- All customers sorted by total spend (highest to lowest)
 - Only customers with completed or processing orders
 - Formatted currency values with 2 decimal places
 - Timestamped filename (e.g., `top-spenders-2024-01-15-143022.csv`)
@@ -103,6 +104,11 @@ Check your internet connection and ensure your WordPress admin is accessible.
 - No impact on frontend performance
 
 ## Version History
+
+### 1.2.0
+- Export all customers with any purchase history (removed 500-customer cap)
+- Increased batch size from 50 to 100 customers per request
+- Updated UI text and documentation
 
 ### 1.1.0
 - Added AJAX-based batch processing
