@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Top Spenders Export
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Export all customers with purchase history by total revenue as a CSV file with rate limiting and batch processing
- * Version: 1.2.0
+ * Version: 1.3.0
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -67,14 +67,14 @@ class WC_Top_Spenders_Export {
             'wc-top-spenders-admin',
             plugins_url('', __FILE__) . '/assets/admin.css',
             [],
-            '1.2.0'
+            '1.3.0'
         );
 
         wp_enqueue_script(
             'wc-top-spenders-admin',
             plugins_url('', __FILE__) . '/assets/admin.js',
             ['jquery'],
-            '1.2.0',
+            '1.3.0',
             true
         );
 
@@ -101,7 +101,7 @@ class WC_Top_Spenders_Export {
         ?>
         <div class="wrap wc-top-spenders-wrap">
             <h1><?php _e('Top Spenders Export', 'wc-top-spenders'); ?></h1>
-            <p><?php _e('Export all customers with purchase history, sorted by total spend, to a CSV file.', 'wc-top-spenders'); ?></p>
+            <p><?php _e('Export all registered users sorted by total spend. Users with no orders are included with a spend of $0.00.', 'wc-top-spenders'); ?></p>
 
             <div class="wc-top-spenders-card">
                 <h2><?php _e('Export Settings', 'wc-top-spenders'); ?></h2>
@@ -161,7 +161,7 @@ class WC_Top_Spenders_Export {
             ?>
             <div class="wc-top-spenders-card wc-top-spenders-stats">
                 <h3><?php _e('Statistics', 'wc-top-spenders'); ?></h3>
-                <p><strong><?php _e('Total Customers with Orders:', 'wc-top-spenders'); ?></strong> <?php echo number_format($stats['total_customers']); ?></p>
+                <p><strong><?php _e('Total Registered Users:', 'wc-top-spenders'); ?></strong> <?php echo number_format($stats['total_customers']); ?></p>
                 <p><strong><?php _e('Total Completed Orders:', 'wc-top-spenders'); ?></strong> <?php echo number_format($stats['total_orders']); ?></p>
                 <p><strong><?php _e('Total Revenue (Completed Orders):', 'wc-top-spenders'); ?></strong> <?php echo wc_price($stats['total_revenue']); ?></p>
             </div>
@@ -250,7 +250,7 @@ class WC_Top_Spenders_Export {
             }
 
             if ($total_customers === 0) {
-                throw new Exception(__('No customers found with completed or processing orders.', 'wc-top-spenders'));
+                throw new Exception(__('No registered users found.', 'wc-top-spenders'));
             }
 
             // Export all customers
@@ -373,17 +373,7 @@ class WC_Top_Spenders_Export {
         global $wpdb;
 
         try {
-            $count = $wpdb->get_var("
-                SELECT COUNT(DISTINCT pm_email.meta_value)
-                FROM {$wpdb->posts} p
-                INNER JOIN {$wpdb->postmeta} pm_email
-                    ON p.ID = pm_email.post_id
-                    AND pm_email.meta_key = '_billing_email'
-                WHERE p.post_type = 'shop_order'
-                AND p.post_status IN ('wc-completed', 'wc-processing')
-                AND pm_email.meta_value IS NOT NULL
-                AND pm_email.meta_value != ''
-            ");
+            $count = $wpdb->get_var("SELECT COUNT(ID) FROM {$wpdb->users}");
 
             if ($wpdb->last_error) {
                 return new WP_Error('db_error', $wpdb->last_error);
@@ -395,49 +385,48 @@ class WC_Top_Spenders_Export {
         }
     }
 
-    private function get_top_spenders_batch($offset = 0, $limit = 50) {
+    private function get_top_spenders_batch($offset = 0, $limit = 100) {
         global $wpdb;
 
         try {
-            // Optimized query using subquery for better performance
+            // Query all registered users, LEFT JOIN their order totals so users
+            // with no orders still appear with a total_spent of 0.
+            // Uses _customer_user postmeta to reliably link orders to user IDs.
             $query = $wpdb->prepare("
                 SELECT
-                    customer_email as email,
-                    first_name,
-                    last_name,
-                    phone,
-                    total_spent
-                FROM (
+                    u.user_email                       AS email,
+                    um_first.meta_value                AS first_name,
+                    um_last.meta_value                 AS last_name,
+                    um_phone.meta_value                AS phone,
+                    COALESCE(ot.total_spent, 0)        AS total_spent
+                FROM {$wpdb->users} u
+                LEFT JOIN {$wpdb->usermeta} um_first
+                    ON u.ID = um_first.user_id
+                    AND um_first.meta_key = 'billing_first_name'
+                LEFT JOIN {$wpdb->usermeta} um_last
+                    ON u.ID = um_last.user_id
+                    AND um_last.meta_key = 'billing_last_name'
+                LEFT JOIN {$wpdb->usermeta} um_phone
+                    ON u.ID = um_phone.user_id
+                    AND um_phone.meta_key = 'billing_phone'
+                LEFT JOIN (
                     SELECT
-                        pm_email.meta_value as customer_email,
-                        MAX(pm_first.meta_value) as first_name,
-                        MAX(pm_last.meta_value) as last_name,
-                        MAX(pm_phone.meta_value) as phone,
-                        SUM(CAST(pm_total.meta_value AS DECIMAL(10,2))) as total_spent
+                        CAST(pm_cust.meta_value AS UNSIGNED) AS user_id,
+                        SUM(CAST(pm_total.meta_value AS DECIMAL(10,2))) AS total_spent
                     FROM {$wpdb->posts} p
-                    INNER JOIN {$wpdb->postmeta} pm_email
-                        ON p.ID = pm_email.post_id
-                        AND pm_email.meta_key = '_billing_email'
+                    INNER JOIN {$wpdb->postmeta} pm_cust
+                        ON p.ID = pm_cust.post_id
+                        AND pm_cust.meta_key = '_customer_user'
+                        AND pm_cust.meta_value != '0'
                     INNER JOIN {$wpdb->postmeta} pm_total
                         ON p.ID = pm_total.post_id
                         AND pm_total.meta_key = '_order_total'
-                    LEFT JOIN {$wpdb->postmeta} pm_first
-                        ON p.ID = pm_first.post_id
-                        AND pm_first.meta_key = '_billing_first_name'
-                    LEFT JOIN {$wpdb->postmeta} pm_last
-                        ON p.ID = pm_last.post_id
-                        AND pm_last.meta_key = '_billing_last_name'
-                    LEFT JOIN {$wpdb->postmeta} pm_phone
-                        ON p.ID = pm_phone.post_id
-                        AND pm_phone.meta_key = '_billing_phone'
                     WHERE p.post_type = 'shop_order'
                     AND p.post_status IN ('wc-completed', 'wc-processing')
-                    AND pm_email.meta_value IS NOT NULL
-                    AND pm_email.meta_value != ''
-                    GROUP BY pm_email.meta_value
-                    ORDER BY total_spent DESC
-                    LIMIT %d OFFSET %d
-                ) as top_customers
+                    GROUP BY pm_cust.meta_value
+                ) AS ot ON u.ID = ot.user_id
+                ORDER BY total_spent DESC, u.ID ASC
+                LIMIT %d OFFSET %d
             ", $limit, $offset);
 
             $results = $wpdb->get_results($query);
@@ -446,24 +435,23 @@ class WC_Top_Spenders_Export {
                 return new WP_Error('db_error', $wpdb->last_error);
             }
 
-            // Process results
             $processed_results = [];
             foreach ($results as $customer) {
                 $first_name = !empty($customer->first_name) ? sanitize_text_field($customer->first_name) : '';
-                $last_name = !empty($customer->last_name) ? sanitize_text_field($customer->last_name) : '';
-                $full_name = trim($first_name . ' ' . $last_name);
+                $last_name  = !empty($customer->last_name)  ? sanitize_text_field($customer->last_name)  : '';
+                $full_name  = trim($first_name . ' ' . $last_name);
 
-                // If no name, use email username
+                // Fall back to the username portion of the email if no name is set
                 if (empty($full_name)) {
                     $email_parts = explode('@', $customer->email);
-                    $full_name = sanitize_text_field($email_parts[0]);
+                    $full_name   = sanitize_text_field($email_parts[0]);
                 }
 
                 $processed_results[] = [
-                    'name' => $full_name,
-                    'email' => sanitize_email($customer->email),
-                    'phone' => !empty($customer->phone) ? sanitize_text_field($customer->phone) : 'N/A',
-                    'total_spent' => floatval($customer->total_spent)
+                    'name'        => $full_name,
+                    'email'       => sanitize_email($customer->email),
+                    'phone'       => !empty($customer->phone) ? sanitize_text_field($customer->phone) : 'N/A',
+                    'total_spent' => floatval($customer->total_spent),
                 ];
             }
 
@@ -520,18 +508,8 @@ class WC_Top_Spenders_Export {
         global $wpdb;
 
         try {
-            // Get total customers with orders
-            $total_customers = $wpdb->get_var("
-                SELECT COUNT(DISTINCT pm_email.meta_value)
-                FROM {$wpdb->posts} p
-                INNER JOIN {$wpdb->postmeta} pm_email
-                    ON p.ID = pm_email.post_id
-                    AND pm_email.meta_key = '_billing_email'
-                WHERE p.post_type = 'shop_order'
-                AND p.post_status IN ('wc-completed', 'wc-processing')
-                AND pm_email.meta_value IS NOT NULL
-                AND pm_email.meta_value != ''
-            ");
+            // All registered users
+            $total_customers = $wpdb->get_var("SELECT COUNT(ID) FROM {$wpdb->users}");
 
             if ($wpdb->last_error) {
                 return new WP_Error('db_error', $wpdb->last_error);
