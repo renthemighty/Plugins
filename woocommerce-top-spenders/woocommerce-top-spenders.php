@@ -3,7 +3,7 @@
  * Plugin Name: WooCommerce Top Spenders Export
  * Plugin URI: https://github.com/renthemighty/Plugins
  * Description: Export all customers with purchase history by total revenue as a CSV file with rate limiting and batch processing
- * Version: 1.3.0
+ * Version: 1.4.0
  * Author: SPVS
  * Author URI: https://github.com/renthemighty
  * Requires at least: 5.0
@@ -67,14 +67,14 @@ class WC_Top_Spenders_Export {
             'wc-top-spenders-admin',
             plugins_url('', __FILE__) . '/assets/admin.css',
             [],
-            '1.3.0'
+            '1.4.0'
         );
 
         wp_enqueue_script(
             'wc-top-spenders-admin',
             plugins_url('', __FILE__) . '/assets/admin.js',
             ['jquery'],
-            '1.3.0',
+            '1.4.0',
             true
         );
 
@@ -238,36 +238,43 @@ class WC_Top_Spenders_Export {
             wp_send_json_error(['message' => __('Permission denied.', 'wc-top-spenders')]);
         }
 
+        // Allow extra time for the one-time sort query on large stores, and
+        // keep running even if the browser disconnects mid-request.
+        @set_time_limit(300);
+        ignore_user_abort(true);
+
         try {
             // Clear any previous export data
             $this->clear_export_data();
 
-            // Get total customer count
-            $total_customers = $this->get_customer_count();
+            // Run the expensive ORDER BY query exactly once and cache the result.
+            // Each batch request will then do a cheap WHERE ID IN (...) lookup.
+            $sorted = $this->build_sorted_user_list();
 
-            if (is_wp_error($total_customers)) {
-                throw new Exception($total_customers->get_error_message());
+            if (is_wp_error($sorted)) {
+                throw new Exception($sorted->get_error_message());
             }
 
-            if ($total_customers === 0) {
+            if (empty($sorted)) {
                 throw new Exception(__('No registered users found.', 'wc-top-spenders'));
             }
 
-            // Export all customers
-            $total_to_process = $total_customers;
-            $total_batches = ceil($total_to_process / self::BATCH_SIZE);
+            $total_to_process = count($sorted);
+            $total_batches    = (int) ceil($total_to_process / self::BATCH_SIZE);
 
-            // Store export session data
+            // Persist the sorted list so batches can slice into it cheaply.
+            set_transient('wc_top_spenders_sorted_ids', $sorted, self::TRANSIENT_EXPIRY);
+
             set_transient('wc_top_spenders_export_session', [
                 'total_customers' => $total_to_process,
-                'total_batches' => $total_batches,
-                'current_batch' => 0,
-                'started' => time()
+                'total_batches'   => $total_batches,
+                'current_batch'   => 0,
+                'started'         => time(),
             ], self::TRANSIENT_EXPIRY);
 
             wp_send_json_success([
-                'total_batches' => $total_batches,
-                'total_customers' => $total_to_process
+                'total_batches'   => $total_batches,
+                'total_customers' => $total_to_process,
             ]);
         } catch (Exception $e) {
             wp_send_json_error(['message' => $e->getMessage()]);
@@ -281,31 +288,37 @@ class WC_Top_Spenders_Export {
             wp_send_json_error(['message' => __('Permission denied.', 'wc-top-spenders')]);
         }
 
+        @set_time_limit(60);
+        ignore_user_abort(true);
+
         try {
             $batch_number = isset($_POST['batch']) ? intval($_POST['batch']) : 0;
 
-            // Get session data
             $session = get_transient('wc_top_spenders_export_session');
             if (!$session) {
                 throw new Exception(__('Export session expired. Please start a new export.', 'wc-top-spenders'));
             }
 
-            // Validate batch number
             if ($batch_number < 0 || $batch_number >= $session['total_batches']) {
                 throw new Exception(__('Invalid batch number.', 'wc-top-spenders'));
             }
 
-            // Get customer data for this batch
-            $offset = $batch_number * self::BATCH_SIZE;
-            $limit = self::BATCH_SIZE;
+            // Retrieve the pre-computed sorted list (built once during start_export).
+            $sorted = get_transient('wc_top_spenders_sorted_ids');
+            if (!is_array($sorted)) {
+                throw new Exception(__('Sorted user list missing. Please start a new export.', 'wc-top-spenders'));
+            }
 
-            $customers = $this->get_top_spenders_batch($offset, $limit);
+            // Slice just the IDs for this batch — no ORDER BY, no subquery.
+            $offset     = $batch_number * self::BATCH_SIZE;
+            $batch_meta = array_slice($sorted, $offset, self::BATCH_SIZE);
+
+            $customers = $this->fetch_user_details($batch_meta);
 
             if (is_wp_error($customers)) {
                 throw new Exception($customers->get_error_message());
             }
 
-            // Store batch data
             $existing_data = get_transient('wc_top_spenders_export_data');
             if (!is_array($existing_data)) {
                 $existing_data = [];
@@ -314,14 +327,13 @@ class WC_Top_Spenders_Export {
             $existing_data = array_merge($existing_data, $customers);
             set_transient('wc_top_spenders_export_data', $existing_data, self::TRANSIENT_EXPIRY);
 
-            // Update session
             $session['current_batch'] = $batch_number + 1;
             set_transient('wc_top_spenders_export_session', $session, self::TRANSIENT_EXPIRY);
 
             wp_send_json_success([
-                'batch' => $batch_number,
+                'batch'     => $batch_number,
                 'processed' => count($existing_data),
-                'total' => $session['total_customers']
+                'total'     => $session['total_customers'],
             ]);
         } catch (Exception $e) {
             wp_send_json_error(['message' => $e->getMessage()]);
@@ -367,48 +379,23 @@ class WC_Top_Spenders_Export {
     private function clear_export_data() {
         delete_transient('wc_top_spenders_export_session');
         delete_transient('wc_top_spenders_export_data');
+        delete_transient('wc_top_spenders_sorted_ids');
     }
 
-    private function get_customer_count() {
+    /**
+     * Run once on export start: returns a sorted array of
+     * [ ['id' => int, 'total_spent' => float], ... ] for ALL registered users,
+     * ordered by total_spent DESC. Expensive query, but only ever runs once.
+     */
+    private function build_sorted_user_list() {
         global $wpdb;
 
         try {
-            $count = $wpdb->get_var("SELECT COUNT(ID) FROM {$wpdb->users}");
-
-            if ($wpdb->last_error) {
-                return new WP_Error('db_error', $wpdb->last_error);
-            }
-
-            return intval($count);
-        } catch (Exception $e) {
-            return new WP_Error('db_exception', $e->getMessage());
-        }
-    }
-
-    private function get_top_spenders_batch($offset = 0, $limit = 100) {
-        global $wpdb;
-
-        try {
-            // Query all registered users, LEFT JOIN their order totals so users
-            // with no orders still appear with a total_spent of 0.
-            // Uses _customer_user postmeta to reliably link orders to user IDs.
-            $query = $wpdb->prepare("
+            $results = $wpdb->get_results("
                 SELECT
-                    u.user_email                       AS email,
-                    um_first.meta_value                AS first_name,
-                    um_last.meta_value                 AS last_name,
-                    um_phone.meta_value                AS phone,
-                    COALESCE(ot.total_spent, 0)        AS total_spent
+                    u.ID,
+                    COALESCE(ot.total_spent, 0) AS total_spent
                 FROM {$wpdb->users} u
-                LEFT JOIN {$wpdb->usermeta} um_first
-                    ON u.ID = um_first.user_id
-                    AND um_first.meta_key = 'billing_first_name'
-                LEFT JOIN {$wpdb->usermeta} um_last
-                    ON u.ID = um_last.user_id
-                    AND um_last.meta_key = 'billing_last_name'
-                LEFT JOIN {$wpdb->usermeta} um_phone
-                    ON u.ID = um_phone.user_id
-                    AND um_phone.meta_key = 'billing_phone'
                 LEFT JOIN (
                     SELECT
                         CAST(pm_cust.meta_value AS UNSIGNED) AS user_id,
@@ -426,8 +413,66 @@ class WC_Top_Spenders_Export {
                     GROUP BY pm_cust.meta_value
                 ) AS ot ON u.ID = ot.user_id
                 ORDER BY total_spent DESC, u.ID ASC
-                LIMIT %d OFFSET %d
-            ", $limit, $offset);
+            ", ARRAY_A);
+
+            if ($wpdb->last_error) {
+                return new WP_Error('db_error', $wpdb->last_error);
+            }
+
+            // Cast types once so downstream code is clean.
+            return array_map(function($row) {
+                return [
+                    'id'          => (int) $row['ID'],
+                    'total_spent' => (float) $row['total_spent'],
+                ];
+            }, $results);
+        } catch (Exception $e) {
+            return new WP_Error('db_exception', $e->getMessage());
+        }
+    }
+
+    /**
+     * Called per-batch: fetch name/email/phone for a pre-sliced set of
+     * [ ['id' => int, 'total_spent' => float], ... ] rows.
+     * No ORDER BY, no subquery — just a simple WHERE ID IN (...) join.
+     */
+    private function fetch_user_details(array $batch_meta) {
+        global $wpdb;
+
+        if (empty($batch_meta)) {
+            return [];
+        }
+
+        try {
+            // Build a lookup map: user_id => total_spent
+            $totals_map = [];
+            $ids        = [];
+            foreach ($batch_meta as $row) {
+                $ids[]                    = (int) $row['id'];
+                $totals_map[$row['id']]   = $row['total_spent'];
+            }
+
+            $id_placeholders = implode(',', array_fill(0, count($ids), '%d'));
+
+            $query = $wpdb->prepare("
+                SELECT
+                    u.ID,
+                    u.user_email                AS email,
+                    um_first.meta_value         AS first_name,
+                    um_last.meta_value          AS last_name,
+                    um_phone.meta_value         AS phone
+                FROM {$wpdb->users} u
+                LEFT JOIN {$wpdb->usermeta} um_first
+                    ON u.ID = um_first.user_id
+                    AND um_first.meta_key = 'billing_first_name'
+                LEFT JOIN {$wpdb->usermeta} um_last
+                    ON u.ID = um_last.user_id
+                    AND um_last.meta_key = 'billing_last_name'
+                LEFT JOIN {$wpdb->usermeta} um_phone
+                    ON u.ID = um_phone.user_id
+                    AND um_phone.meta_key = 'billing_phone'
+                WHERE u.ID IN ($id_placeholders)
+            ", ...$ids);
 
             $results = $wpdb->get_results($query);
 
@@ -435,27 +480,35 @@ class WC_Top_Spenders_Export {
                 return new WP_Error('db_error', $wpdb->last_error);
             }
 
-            $processed_results = [];
-            foreach ($results as $customer) {
-                $first_name = !empty($customer->first_name) ? sanitize_text_field($customer->first_name) : '';
-                $last_name  = !empty($customer->last_name)  ? sanitize_text_field($customer->last_name)  : '';
-                $full_name  = trim($first_name . ' ' . $last_name);
+            // Index results by ID so we can merge totals and preserve sort order.
+            $by_id = [];
+            foreach ($results as $row) {
+                $by_id[(int) $row->ID] = $row;
+            }
 
-                // Fall back to the username portion of the email if no name is set
-                if (empty($full_name)) {
-                    $email_parts = explode('@', $customer->email);
-                    $full_name   = sanitize_text_field($email_parts[0]);
+            $processed = [];
+            foreach ($ids as $user_id) {
+                $row = isset($by_id[$user_id]) ? $by_id[$user_id] : null;
+
+                $first_name = ($row && !empty($row->first_name)) ? sanitize_text_field($row->first_name) : '';
+                $last_name  = ($row && !empty($row->last_name))  ? sanitize_text_field($row->last_name)  : '';
+                $full_name  = trim($first_name . ' ' . $last_name);
+                $email      = $row ? sanitize_email($row->email) : '';
+
+                if (empty($full_name) && !empty($email)) {
+                    $parts     = explode('@', $email);
+                    $full_name = sanitize_text_field($parts[0]);
                 }
 
-                $processed_results[] = [
+                $processed[] = [
                     'name'        => $full_name,
-                    'email'       => sanitize_email($customer->email),
-                    'phone'       => !empty($customer->phone) ? sanitize_text_field($customer->phone) : 'N/A',
-                    'total_spent' => floatval($customer->total_spent),
+                    'email'       => $email,
+                    'phone'       => ($row && !empty($row->phone)) ? sanitize_text_field($row->phone) : 'N/A',
+                    'total_spent' => $totals_map[$user_id] ?? 0.0,
                 ];
             }
 
-            return $processed_results;
+            return $processed;
         } catch (Exception $e) {
             return new WP_Error('db_exception', $e->getMessage());
         }
